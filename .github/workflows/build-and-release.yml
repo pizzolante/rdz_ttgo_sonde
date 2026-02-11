@@ -25,8 +25,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install platformio
       
-      - name: Build firmware
-        run: pio run -e ttgo-lora32
+      - name: Build firmware (with filesystem image)
+        run: pio run -e ttgo-lora32 -t firmware
       
       - name: Get version info
         id: version
@@ -48,20 +48,22 @@ jobs:
           # Firmware UPDATE (solo app, per aggiornamento OTA o via USB mantenendo i dati)
           cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_update.bin
           
-          # Firmware MAIN (flash completo con bootloader e partitions)
-          # Crea un file binario combinato per flash completo
-          if [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] && [ -f ".pio/build/ttgo-lora32/partitions.bin" ]; then
-            # Crea un file vuoto di 4MB
-            dd if=/dev/zero bs=1024 count=4096 of=release/rdz_ttgo_sonde_main.bin
-            # Bootloader a 0x1000
-            dd if=.pio/build/ttgo-lora32/bootloader.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x1000)) conv=notrunc
-            # Partition table a 0x8000
-            dd if=.pio/build/ttgo-lora32/partitions.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x8000)) conv=notrunc
-            # Firmware a 0x10000
-            dd if=.pio/build/ttgo-lora32/firmware.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x10000)) conv=notrunc
+          # Firmware MAIN (flash completo con bootloader, partitions, firmware, fonts e filesystem)
+          if [ -f ".pio/build/ttgo-lora32/firmware-image.bin" ]; then
+            cp .pio/build/ttgo-lora32/firmware-image.bin release/rdz_ttgo_sonde_main.bin
           else
-            # Fallback: copia solo il firmware
-            cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_main.bin
+            # Fallback: usa merge_bin per includere anche fonts e filesystem se disponibili
+            if [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] && [ -f ".pio/build/ttgo-lora32/partitions.bin" ]; then
+              esptool.py --chip esp32 merge_bin -o release/rdz_ttgo_sonde_main.bin --flash_mode dio --flash_size 4MB \
+                0x1000 .pio/build/ttgo-lora32/bootloader.bin \
+                0x8000 .pio/build/ttgo-lora32/partitions.bin \
+                0x10000 .pio/build/ttgo-lora32/firmware.bin \
+                0x310000 .pio/build/ttgo-lora32/fonts.bin \
+                0x320000 .pio/build/ttgo-lora32/littlefs.bin
+            else
+              # Ultimo fallback: copia solo il firmware
+              cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_main.bin
+            fi
           fi
           
           # Crea un file con informazioni sulla build
@@ -70,7 +72,7 @@ jobs:
           echo "Date: $(date)" >> release/BUILD-INFO.txt
           echo "" >> release/BUILD-INFO.txt
           echo "Files:" >> release/BUILD-INFO.txt
-          echo "- rdz_ttgo_sonde_main.bin: Flash completo (include bootloader, partitions, firmware)" >> release/BUILD-INFO.txt
+          echo "- rdz_ttgo_sonde_main.bin: Flash completo (include bootloader, partitions, firmware, fonts, filesystem)" >> release/BUILD-INFO.txt
           echo "- rdz_ttgo_sonde_update.bin: Solo firmware per aggiornamento (mantiene configurazione)" >> release/BUILD-INFO.txt
       
       - name: Create Release
@@ -90,7 +92,7 @@ jobs:
             
             ### 📥 Files disponibili
             
-            - **rdz_ttgo_sonde_main.bin**: Flash completo (bootloader + partitions + firmware)
+            - **rdz_ttgo_sonde_main.bin**: Flash completo (bootloader + partitions + firmware + fonts + filesystem)
               - Usa questo per la prima installazione o per ripristinare completamente il dispositivo
               - ⚠️ Cancella tutte le configurazioni e i dati salvati
             
