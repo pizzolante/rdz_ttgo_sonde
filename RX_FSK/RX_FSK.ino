@@ -51,6 +51,9 @@
 #if FEATURE_MQTT
 #include "src/conn-mqtt.h"
 #endif
+#if FEATURE_TELEGRAM
+#include "src/conn-telegram.h"
+#endif
 #if FEATURE_SDCARD
 #include "src/conn-sdcard.h"
 #endif
@@ -79,6 +82,9 @@ Conn *connectors[] = { &connSystem,
 #endif
 #if FEATURE_MQTT
 &connMQTT,
+#endif
+#if FEATURE_TELEGRAM
+&connTelegram,
 #endif
 #if FEATURE_SDCARD
 &connSDCard,
@@ -800,6 +806,16 @@ struct st_configitems config_list[] = {
   {"mqtt.password", 63, &sonde.config.mqtt.password},
   {"mqtt.prefix", 63, &sonde.config.mqtt.prefix},
   {"mqtt.report_interval", 0, &sonde.config.mqtt.report_interval},
+#endif
+#if FEATURE_TELEGRAM
+  /* Telegram */
+  {"telegram.active", 0, &sonde.config.telegram.active},
+  {"telegram.token", 63, &sonde.config.telegram.token},
+  {"telegram.chat_id", 31, &sonde.config.telegram.chat_id},
+  {"telegram.notify_new", 0, &sonde.config.telegram.notify_new},
+  {"telegram.notify_burst", 0, &sonde.config.telegram.notify_burst},
+  {"telegram.notify_end", 0, &sonde.config.telegram.notify_end},
+  {"telegram.end_delay", 0, &sonde.config.telegram.end_delay},
 #endif
 #if FEATURE_SDCARD
   /* SD-Card settings */

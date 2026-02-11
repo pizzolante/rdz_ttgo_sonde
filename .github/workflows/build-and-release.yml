@@ -44,15 +44,34 @@ jobs:
       - name: Prepare release files
         run: |
           mkdir -p release
-          cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_firmware.bin
-          # Copia anche il file partition table se esiste
-          if [ -f ".pio/build/ttgo-lora32/partitions.bin" ]; then
-            cp .pio/build/ttgo-lora32/partitions.bin release/partitions.bin
+          
+          # Firmware UPDATE (solo app, per aggiornamento OTA o via USB mantenendo i dati)
+          cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_update.bin
+          
+          # Firmware MAIN (flash completo con bootloader e partitions)
+          # Crea un file binario combinato per flash completo
+          if [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] && [ -f ".pio/build/ttgo-lora32/partitions.bin" ]; then
+            # Crea un file vuoto di 4MB
+            dd if=/dev/zero bs=1024 count=4096 of=release/rdz_ttgo_sonde_main.bin
+            # Bootloader a 0x1000
+            dd if=.pio/build/ttgo-lora32/bootloader.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x1000)) conv=notrunc
+            # Partition table a 0x8000
+            dd if=.pio/build/ttgo-lora32/partitions.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x8000)) conv=notrunc
+            # Firmware a 0x10000
+            dd if=.pio/build/ttgo-lora32/firmware.bin of=release/rdz_ttgo_sonde_main.bin bs=1 seek=$((0x10000)) conv=notrunc
+          else
+            # Fallback: copia solo il firmware
+            cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_main.bin
           fi
+          
           # Crea un file con informazioni sulla build
           echo "Build: ${{ steps.version.outputs.version }}" > release/BUILD-INFO.txt
           echo "Commit: ${{ github.sha }}" >> release/BUILD-INFO.txt
           echo "Date: $(date)" >> release/BUILD-INFO.txt
+          echo "" >> release/BUILD-INFO.txt
+          echo "Files:" >> release/BUILD-INFO.txt
+          echo "- rdz_ttgo_sonde_main.bin: Flash completo (include bootloader, partitions, firmware)" >> release/BUILD-INFO.txt
+          echo "- rdz_ttgo_sonde_update.bin: Solo firmware per aggiornamento (mantiene configurazione)" >> release/BUILD-INFO.txt
       
       - name: Create Release
         id: create_release
@@ -69,27 +88,51 @@ jobs:
             **Commit:** ${{ github.sha }}
             **Data:** ${{ steps.version.outputs.timestamp }}
             
+            ### 📥 Files disponibili
+            
+            - **rdz_ttgo_sonde_main.bin**: Flash completo (bootloader + partitions + firmware)
+              - Usa questo per la prima installazione o per ripristinare completamente il dispositivo
+              - ⚠️ Cancella tutte le configurazioni e i dati salvati
+            
+            - **rdz_ttgo_sonde_update.bin**: Solo firmware per aggiornamento
+              - Usa questo per aggiornare mantenendo configurazioni e dati
+              - Ideale per aggiornamenti via OTA o USB
+            
             ### 📥 Come flashare
             
-            1. Scarica il file `rdz_ttgo_sonde_firmware.bin`
-            2. Usa esptool o PlatformIO per flashare il firmware sul tuo TTGO:
-               ```
-               esptool.py --port /dev/ttyUSB0 write_flash 0x10000 rdz_ttgo_sonde_firmware.bin
-               ```
+            **Flash completo (prima installazione):**
+            ```bash
+            esptool.py --port /dev/ttyUSB0 write_flash 0x0 rdz_ttgo_sonde_main.bin
+            ```
+            
+            **Aggiornamento (mantiene configurazione):**
+            ```bash
+            esptool.py --port /dev/ttyUSB0 write_flash 0x10000 rdz_ttgo_sonde_update.bin
+            ```
             
             ### ⚠️ Nota
             Questa è una build automatica dal branch ${{ github.ref_name }}. Potrebbe non essere stabile.
           draft: false
           prerelease: ${{ github.ref_name == 'snapshot' }}
       
-      - name: Upload Firmware
+      - name: Upload Firmware MAIN
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ./release/rdz_ttgo_sonde_firmware.bin
-          asset_name: rdz_ttgo_sonde_firmware.bin
+          asset_path: ./release/rdz_ttgo_sonde_main.bin
+          asset_name: rdz_ttgo_sonde_main.bin
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Firmware UPDATE
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/rdz_ttgo_sonde_update.bin
+          asset_name: rdz_ttgo_sonde_update.bin
           asset_content_type: application/octet-stream
       
       - name: Upload Build Info
