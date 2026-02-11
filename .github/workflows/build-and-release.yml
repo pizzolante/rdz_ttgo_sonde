@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - test
+      - snapshot
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '#nobuild')"
     
     steps:
       - name: Checkout code
@@ -58,10 +60,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: test-${{ steps.version.outputs.timestamp }}-${{ steps.version.outputs.short_sha }}
-          release_name: Test Build ${{ steps.version.outputs.version }} (${{ steps.version.outputs.timestamp }})
+          tag_name: ${{ github.ref_name }}-${{ steps.version.outputs.timestamp }}-${{ steps.version.outputs.short_sha }}
+          release_name: ${{ github.ref_name }} Build ${{ steps.version.outputs.version }} (${{ steps.version.outputs.timestamp }})
           body: |
-            ## 🚀 Build automatica da branch test
+            ## 🚀 Build automatica da branch ${{ github.ref_name }}
             
             **Versione:** ${{ steps.version.outputs.version }}
             **Commit:** ${{ github.sha }}
@@ -76,9 +78,9 @@ jobs:
                ```
             
             ### ⚠️ Nota
-            Questa è una build automatica dal branch di test. Potrebbe non essere stabile.
+            Questa è una build automatica dal branch ${{ github.ref_name }}. Potrebbe non essere stabile.
           draft: false
-          prerelease: true
+          prerelease: ${{ github.ref_name == 'snapshot' }}
       
       - name: Upload Firmware
         uses: actions/upload-release-asset@v1
