@@ -9,8 +9,7 @@
 #include <Arduino.h>
 #include "conn-telegram.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <HTTPClient.h>
+#include <esp_http_client.h>
 
 extern const char *version_name;
 extern const char *version_id;
@@ -101,28 +100,17 @@ void ConnTelegram::updateStation(PosInfo *pi) {
 	}
 }
 
-// Helper function to send message via Telegram Bot API using HTTPClient
+// Helper function to send message via Telegram Bot API using esp_http_client
 bool ConnTelegram::sendTelegramMessage(const char *message) {
 	if (WiFi.status() != WL_CONNECTED) {
 		LOG_W(TAG, "WiFi not connected");
 		return false;
 	}
 
-	WiFiClientSecure client;
-	client.setInsecure(); // Skip certificate validation
-	
-	HTTPClient http;
-	
 	// Build API URL
 	String url = "https://api.telegram.org/bot";
 	url += sonde.config.telegram.token;
 	url += "/sendMessage";
-	
-	LOG_D(TAG, "Connecting to Telegram API via HTTPClient...");
-	
-	// Begin HTTPS connection with secure client
-	http.begin(client, url);
-	http.addHeader("Content-Type", "application/json");
 
 	// Escape special characters in message for JSON
 	String escapedMessage = message;
@@ -137,37 +125,60 @@ bool ConnTelegram::sendTelegramMessage(const char *message) {
 	payload += escapedMessage;
 	payload += "\",\"parse_mode\":\"Markdown\"}";
 
-	LOG_D(TAG, "Sending POST request to Telegram");
+	LOG_D(TAG, "Sending request to Telegram API");
+
+	// Configure HTTP client
+	esp_http_client_config_t config = {};
+	config.url = url.c_str();
+	config.method = HTTP_METHOD_POST;
+	config.timeout_ms = 10000;
+	config.skip_cert_common_name_check = true;
 	
-	// Send POST request
-	int httpCode = http.POST(payload);
-	
-	if (httpCode > 0) {
-		LOG_D(TAG, "HTTP response code: %d", httpCode);
-		
-		if (httpCode == HTTP_CODE_OK) {
-			String response = http.getString();
-			LOG_D(TAG, "Telegram response: %s", response.c_str());
-			
-			http.end();
-			
-			if (response.indexOf("\"ok\":true") > 0) {
-				LOG_I(TAG, "Telegram message sent successfully");
-				return true;
-			} else {
-				LOG_E(TAG, "Telegram API error in response");
-				return false;
-			}
-		} else {
-			LOG_E(TAG, "Telegram HTTP error code: %d", httpCode);
-			http.end();
-			return false;
-		}
-	} else {
-		LOG_E(TAG, "Telegram request failed: %s", http.errorToString(httpCode).c_str());
-		http.end();
+	esp_http_client_handle_t client = esp_http_client_init(&config);
+	if (client == NULL) {
+		LOG_E(TAG, "Failed to initialize HTTP client");
 		return false;
 	}
+
+	// Set headers
+	esp_http_client_set_header(client, "Content-Type", "application/json");
+	esp_http_client_set_post_field(client, payload.c_str(), payload.length());
+
+	// Perform HTTP request
+	esp_err_t err = esp_http_client_perform(client);
+	
+	bool success = false;
+	if (err == ESP_OK) {
+		int status_code = esp_http_client_get_status_code(client);
+		LOG_D(TAG, "HTTP Status Code: %d", status_code);
+		
+		if (status_code == 200) {
+			int content_length = esp_http_client_get_content_length(client);
+			if (content_length > 0 && content_length < 2048) {
+				char *buffer = (char *)malloc(content_length + 1);
+				if (buffer != NULL) {
+					int read_len = esp_http_client_read(client, buffer, content_length);
+					if (read_len > 0) {
+						buffer[read_len] = 0;
+						LOG_D(TAG, "Response: %s", buffer);
+						
+						if (strstr(buffer, "\"ok\":true") != NULL) {
+							LOG_I(TAG, "Telegram message sent successfully");
+							success = true;
+						}
+					}
+					free(buffer);
+				}
+			}
+		} else {
+			LOG_E(TAG, "HTTP error code: %d", status_code);
+		}
+	} else {
+		LOG_E(TAG, "HTTP request failed: %s", esp_err_to_name(err));
+	}
+
+	esp_http_client_cleanup(client);
+	return success;
 }
 
 // Find existing sonde state by ID
