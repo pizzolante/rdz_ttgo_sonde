@@ -27,9 +27,22 @@ jobs:
       
       - name: Build firmware
         run: pio run -e ttgo-lora32
+      
+      - name: Verify firmware build output
+        run: |
+          [ -f ".pio/build/ttgo-lora32/firmware.bin" ] || { echo "ERROR: firmware.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] || { echo "ERROR: bootloader.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/partitions.bin" ] || { echo "ERROR: partitions.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/fonts.bin" ] || { echo "ERROR: fonts.bin not generated"; exit 1; }
+          echo "✓ Firmware build artifacts verified"
 
       - name: Build filesystem image
         run: pio run -e ttgo-lora32 -t buildfs
+      
+      - name: Verify filesystem build output
+        run: |
+          [ -f ".pio/build/ttgo-lora32/littlefs.bin" ] || { echo "ERROR: littlefs.bin not generated"; exit 1; }
+          echo "✓ Filesystem build artifacts verified"
       
       - name: Get version info
         id: version
@@ -48,21 +61,30 @@ jobs:
         run: |
           mkdir -p release
           
+          # Verify all required binaries exist before proceeding
+          for file in bootloader.bin partitions.bin firmware.bin fonts.bin littlefs.bin; do
+            [ -f ".pio/build/ttgo-lora32/$file" ] || { echo "FATAL: $file not found"; exit 1; }
+          done
+          
           # Firmware UPDATE (solo app, per aggiornamento OTA o via USB mantenendo i dati)
           cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_update.bin
           
           # Firmware MAIN (flash completo con bootloader, partitions, firmware, fonts e filesystem)
-          if [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] && [ -f ".pio/build/ttgo-lora32/partitions.bin" ]; then
-            python -m esptool --chip esp32 merge_bin -o release/rdz_ttgo_sonde_main.bin --flash_mode dio --flash_size 4MB \
-              0x1000 .pio/build/ttgo-lora32/bootloader.bin \
-              0x8000 .pio/build/ttgo-lora32/partitions.bin \
-              0x10000 .pio/build/ttgo-lora32/firmware.bin \
-              0x310000 .pio/build/ttgo-lora32/fonts.bin \
-              0x320000 .pio/build/ttgo-lora32/littlefs.bin
-          else
-            # Fallback: copia solo il firmware
-            cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_main.bin
-          fi
+          # Offsets da partitions-rdz.csv:
+          # 0x1000: bootloader
+          # 0x8000: partitions
+          # 0x10000: app0 (firmware)
+          # 0x310000: fonts (size 0x10000)
+          # 0x320000: spiffs/littlefs (size 0xD0000)
+          python -m esptool --chip esp32 merge_bin -o release/rdz_ttgo_sonde_main.bin --flash_mode dio --flash_size 4MB \
+            0x1000 .pio/build/ttgo-lora32/bootloader.bin \
+            0x8000 .pio/build/ttgo-lora32/partitions.bin \
+            0x10000 .pio/build/ttgo-lora32/firmware.bin \
+            0x310000 .pio/build/ttgo-lora32/fonts.bin \
+            0x320000 .pio/build/ttgo-lora32/littlefs.bin
+          
+          [ -f "release/rdz_ttgo_sonde_main.bin" ] || { echo "FATAL: merge_bin failed"; exit 1; }
+          echo "✓ Release files prepared successfully"
           
           # Crea un file con informazioni sulla build
           echo "Build: ${{ steps.version.outputs.version }}" > release/BUILD-INFO.txt

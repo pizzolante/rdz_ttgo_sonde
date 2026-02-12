@@ -9,7 +9,7 @@
 #include <Arduino.h>
 #include "conn-telegram.h"
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 
 extern const char *version_name;
 extern const char *version_id;
@@ -100,32 +100,27 @@ void ConnTelegram::updateStation(PosInfo *pi) {
 	}
 }
 
-// Helper function to send message via Telegram Bot API
+// Helper function to send message via Telegram Bot API using WiFiClientSecure
 bool ConnTelegram::sendTelegramMessage(const char *message) {
 	if (WiFi.status() != WL_CONNECTED) {
 		LOG_W(TAG, "WiFi not connected");
 		return false;
 	}
 
-	HTTPClient http;
+	WiFiClientSecure client;
 	
-	// Build the API URL
-	String url = "https://";
-	url += TELEGRAM_API_HOST;
-	url += "/bot";
-	url += sonde.config.telegram.token;
-	url += "/sendMessage";
-
-	LOG_D(TAG, "Connecting to Telegram API via HTTPS...");
+	// Disable certificate verification for simplicity (production: use proper certs)
+	client.setInsecure();
 	
-	// Begin HTTPS connection (HTTPClient handles SSL/TLS automatically)
-	http.begin(url);
+	LOG_D(TAG, "Connecting to Telegram API via WiFiClientSecure...");
 	
-	// Set timeout
-	http.setTimeout(10000);
+	// Connect to Telegram API
+	if (!client.connect(TELEGRAM_API_HOST, TELEGRAM_API_PORT)) {
+		LOG_E(TAG, "Failed to connect to %s:%d", TELEGRAM_API_HOST, TELEGRAM_API_PORT);
+		return false;
+	}
 	
-	// Set content type
-	http.addHeader("Content-Type", "application/json");
+	LOG_D(TAG, "Connected to Telegram API");
 
 	// Escape special characters in message for JSON
 	String escapedMessage = message;
@@ -140,32 +135,53 @@ bool ConnTelegram::sendTelegramMessage(const char *message) {
 	payload += escapedMessage;
 	payload += "\",\"parse_mode\":\"Markdown\"}";
 
-	LOG_D(TAG, "Sending HTTPS request to Telegram");
+	// Build HTTP POST request
+	String request = "POST /bot";
+	request += sonde.config.telegram.token;
+	request += "/sendMessage HTTP/1.0\r\n";
+	request += "Host: ";
+	request += TELEGRAM_API_HOST;
+	request += "\r\n";
+	request += "Connection: close\r\n";
+	request += "Content-Type: application/json\r\n";
+	request += "Content-Length: ";
+	request += payload.length();
+	request += "\r\n\r\n";
+	request += payload;
+
+	LOG_D(TAG, "Sending HTTP POST request to Telegram");
 	
-	// Send the POST request
-	int httpCode = http.POST(payload);
-
-	// Check response code
-	if (httpCode > 0) {
-		LOG_D(TAG, "Telegram HTTP code: %d", httpCode);
-		
-		// Get the response payload
-		String response = http.getString();
-		LOG_D(TAG, "Telegram response: %s", response.c_str());
-
-		http.end();
-
-		// Check if response contains "ok":true
-		if (httpCode == 200 && response.indexOf("\"ok\":true") > 0) {
-			LOG_I(TAG, "Telegram message sent successfully");
-			return true;
-		} else {
-			LOG_E(TAG, "Telegram API error: %s", response.c_str());
+	// Send the request
+	client.print(request);
+	
+	// Wait for response
+	uint32_t timeout = millis() + 10000;
+	while (client.available() == 0) {
+		if (millis() > timeout) {
+			LOG_E(TAG, "Telegram response timeout");
+			client.stop();
 			return false;
 		}
+		delay(10);
+	}
+
+	// Read response
+	String response = "";
+	while (client.available()) {
+		char c = client.read();
+		response += c;
+	}
+
+	client.stop();
+
+	LOG_D(TAG, "Telegram response: %s", response.c_str());
+
+	// Check if response contains "ok":true
+	if (response.indexOf("\"ok\":true") > 0) {
+		LOG_I(TAG, "Telegram message sent successfully");
+		return true;
 	} else {
-		LOG_E(TAG, "HTTPS connection to Telegram failed: %s", http.errorToString(httpCode).c_str());
-		http.end();
+		LOG_E(TAG, "Telegram API error in response");
 		return false;
 	}
 }
