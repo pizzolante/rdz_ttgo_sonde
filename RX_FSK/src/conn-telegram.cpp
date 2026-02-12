@@ -9,7 +9,7 @@
 #include <Arduino.h>
 #include "conn-telegram.h"
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
+#include <NetworkClientSecure.h>
 
 extern const char *version_name;
 extern const char *version_id;
@@ -100,14 +100,14 @@ void ConnTelegram::updateStation(PosInfo *pi) {
 	}
 }
 
-// Helper function to send message via Telegram Bot API using WiFiClientSecure
+// Helper function to send message via Telegram Bot API using NetworkClientSecure
 bool ConnTelegram::sendTelegramMessage(const char *message) {
 	if (WiFi.status() != WL_CONNECTED) {
 		LOG_W(TAG, "WiFi not connected");
 		return false;
 	}
 
-	WiFiClientSecure client;
+	NetworkClientSecure client;
 	
 	// Disable certificate verification for simplicity (production: use proper certs)
 	client.setInsecure();
