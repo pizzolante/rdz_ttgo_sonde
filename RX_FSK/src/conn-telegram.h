@@ -29,6 +29,8 @@ public:
 
 	String getName();
 
+	bool sendLastFrameTest();
+
 private:
 	// Track sonde states for notifications
 	struct SondeState {

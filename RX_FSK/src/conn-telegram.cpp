@@ -393,4 +393,50 @@ String ConnTelegram::getName() {
 	return "Telegram";
 }
 
+static bool hasValidFrame(const SondeInfo *si) {
+	const SondeData *s = &(si->d);
+	if (s->id[0] == 0) return false;
+	if (isnan(s->lat) || isnan(s->lon)) return false;
+	return true;
+}
+
+bool ConnTelegram::sendLastFrameTest() {
+	if (sonde.config.telegram.active == 0) {
+		LOG_W(TAG, "Telegram disabled in config");
+		return false;
+	}
+	if (strlen(sonde.config.telegram.token) == 0 || strlen(sonde.config.telegram.chat_id) == 0) {
+		LOG_W(TAG, "Telegram not configured");
+		return false;
+	}
+
+	SondeInfo *best = NULL;
+	uint32_t best_rxstart = 0;
+
+	if (rxtask.receiveSonde >= 0 && rxtask.receiveSonde < sonde.config.maxsonde) {
+		SondeInfo *candidate = &sonde.sondeList[rxtask.receiveSonde];
+		if (hasValidFrame(candidate)) {
+			best = candidate;
+			best_rxstart = candidate->rxStart;
+		}
+	}
+
+	for (int i = 0; i < sonde.config.maxsonde; i++) {
+		SondeInfo *candidate = &sonde.sondeList[i];
+		if (!hasValidFrame(candidate)) continue;
+		if (best == NULL || candidate->rxStart > best_rxstart) {
+			best = candidate;
+			best_rxstart = candidate->rxStart;
+		}
+	}
+
+	if (best == NULL) {
+		return sendTelegramMessage("Telegram test: no sonde frames received yet.");
+	}
+
+	String message = "Telegram test - last received frame\n\n";
+	message += formatSondeMessage(best);
+	return sendTelegramMessage(message.c_str());
+}
+
 #endif

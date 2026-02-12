@@ -985,6 +985,9 @@ const char *ctrlid[] = {"rx", "scan", "spec", "wifi", "rx2", "scan2", "spec2", "
 #if FEATURE_SDCARD
 	"format",
 #endif
+#if FEATURE_TELEGRAM
+  "tgtest",
+#endif
         "reboot"};
 
 const char *ctrllabel[] = {"Receiver/next freq. (short keypress)", "Scanner (double keypress)", "Spectrum (medium keypress)", "WiFi (long keypress)",
@@ -995,6 +998,7 @@ const char *ctrllabel[] = {"Receiver/next freq. (short keypress)", "Scanner (dou
 #if FEATURE_SDCARD
 			   "Format SD Card",
 #endif
+			   "Send last frame to Telegram",
 			   "Reboot"
                           };
 
@@ -1059,6 +1063,11 @@ const char *handleControlPost(AsyncWebServerRequest * request) {
     else if (param.equals("format")) {
       button2.pressed = KP_FORMAT;
     }
+#if FEATURE_TELEGRAM
+    else if (param.equals("tgtest")) {
+      connTelegram.sendLastFrameTest();
+    }
+#endif
     else if (param.equals("reboot")) {
       ESP.restart();
     }
