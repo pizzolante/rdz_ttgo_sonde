@@ -203,11 +203,14 @@ struct st_axudpinfo {
 
 struct st_aprsinfo {
         int active;
+	int radiosondy_active;
+	int rotate_active;
         char host[64];
         char host2[64];
         char symbol[3];
         int lowrate;
         int highrate;
+        int rotate_highrate;
         int lowlimit;
         int timeout;
 };
@@ -337,6 +340,9 @@ typedef struct st_rdzconfig {
 	char objcall[10];		// APRS object call (for wettersonde.net)
 	char beaconsym[5];		// APRS beacon symbol
 	char comment[32];
+	char rotate_comment[32];	// Beacon comment used for rotate.aprs.net
+	char rotate_device[32];		// Device name shown on aprs.fi (appended to rotate beacon comment)
+	char signature[32];		// Signature used in APRS login/beacon text for radiosondy
 	struct st_axudpinfo udpfeed;	// target for AXUDP messages
 	struct st_aprsinfo tcpfeed;	// target for APRS-IS TCP connections
 	struct st_kisstnc kisstnc;	// target for KISS TNC (via TCP, mainly for APRSdroid)

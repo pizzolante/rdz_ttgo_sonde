@@ -778,14 +778,20 @@ struct st_configitems config_list[] = {
   {"axudp.ratelimit", 0, &sonde.config.udpfeed.ratelimit},
   /* APRS TCP settings */
   {"tcp.active", -3, &sonde.config.tcpfeed.active},
+  {"tcp.radiosondy.active", -3, &sonde.config.tcpfeed.radiosondy_active},
+  {"tcp.rotate.active", -3, &sonde.config.tcpfeed.rotate_active},
   {"tcp.timeout", 0, &sonde.config.tcpfeed.timeout},
   {"tcp.host", 63, sonde.config.tcpfeed.host},
   {"tcp.host2", 63, &sonde.config.tcpfeed.host2},
   {"tcp.chase", 0, &sonde.config.chase},
   {"tcp.comment", 30, sonde.config.comment},
+  {"tcp.rotate.comment", 30, sonde.config.rotate_comment},
+  {"tcp.rotate.device", 31, sonde.config.rotate_device},
+  {"tcp.signature", 31, sonde.config.signature},
   {"tcp.objcall", 9, sonde.config.objcall},
   {"tcp.beaconsym", 4, sonde.config.beaconsym},
   {"tcp.highrate", 0, &sonde.config.tcpfeed.highrate},
+  {"tcp.rotate.highrate", 0, &sonde.config.tcpfeed.rotate_highrate},
 #endif
 #if FEATURE_CHASEMAPPER
   /* Chasemapper settings */

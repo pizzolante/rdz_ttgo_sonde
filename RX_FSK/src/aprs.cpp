@@ -17,9 +17,6 @@
 #include <inttypes.h>
 #include "aprs.h"
 #include "RS41.h"
-
-extern const char *version_name;
-extern const char *version_id;
 #if 0
 int openudp(const char *ip, int port, struct sockaddr_in *si) {
 	int fd;
@@ -262,11 +259,12 @@ char b[251];
 //char raw[201];
 const char *destcall="APRRDZ";
 
-char *aprs_send_beacon(const char *usercall, float lat, float lon, const char *sym, const char *comment) {
+char *aprs_send_beacon(const char *usercall, float lat, float lon, const char *sym, const char *comment, const char *dest, const char *tail) {
 	*b = 0;
+	if(dest == NULL || *dest == 0) dest = destcall;
 	aprsstr_append(b, usercall);
 	aprsstr_append(b, ">");
-	aprsstr_append(b, destcall);
+	aprsstr_append(b, dest);
 #if 0
 	aprsstr_append(b, ":/");   //  / is report with timestamp
 	int i = strlen(b);
@@ -290,20 +288,23 @@ char *aprs_send_beacon(const char *usercall, float lat, float lon, const char *s
 	// maybe add DAO?
 	i = strlen(b);
 	snprintf(b+i, APRS_MAXLEN-i, "%s", comment);
-
-	i = strlen(b);
-	snprintf(b+i, APRS_MAXLEN-i, " %s-%s", version_name, version_id);
+	if(tail && *tail) {
+		i = strlen(b);
+		snprintf(b+i, APRS_MAXLEN-i, " %s", tail);
+	}
 	//sprintf(b + strlen(b), "%s", version_name);
 	return b;
 }
 
-char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, const char *sym) {
+char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, const char *sym, const char *dest, const char *tail) {
 	SondeData *s = &(si->d);
+	(void)objcall;
 	*b=0;
-	aprsstr_append(b, *objcall ? objcall : usercall);
+	if(dest == NULL || *dest == 0) dest = destcall;
+	aprsstr_append(b, usercall);
 	aprsstr_append(b, ">");
 //	const char *destcall="APRARX,SONDEGATE,TCPIP,qAR,oh3bsg";
-	aprsstr_append(b, destcall);
+	aprsstr_append(b, dest);
 //	if(*objcall) { aprsstr_append(b, ","); aprsstr_append(b, usercall); }
 	// uncompressed
 	aprsstr_append(b, ":;");
@@ -362,7 +363,9 @@ char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, co
 	if( TYPE_IS_DFM(si->type) || TYPE_IS_METEO(si->type) ) {
 		sprintf(b + strlen(b), "ser=%s ", s->ser);
 	}
-	sprintf(b + strlen(b), "%s", version_name);
+	if(tail && *tail) {
+		sprintf(b + strlen(b), "%s", tail);
+	}
 	return b;
 }
 

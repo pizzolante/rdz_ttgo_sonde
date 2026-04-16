@@ -391,11 +391,16 @@ void Sonde::defaultConfig() {
 	strcpy(config.udpfeed.host, "192.168.42.20:9002");
 	config.udpfeed.ratelimit= 1;
 	config.tcpfeed.active = 0;
+	config.tcpfeed.radiosondy_active = 0;
+	config.tcpfeed.rotate_active = 0;
 	strcpy(config.tcpfeed.host, "radiosondy.info:14580");
-	// default config consistent with default config.txt: set only first aprs host
-	// strcpy(config.tcpfeed.host2, "wettersonde.net:14580");
+	strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
 	strcpy(config.tcpfeed.symbol, "/O");
+	config.rotate_comment[0] = 0;
+	config.rotate_device[0] = 0;
 	config.tcpfeed.highrate = 10;
+	config.tcpfeed.rotate_highrate = 60;
+	strcpy(config.signature, "RDZTTGO");
 	config.kisstnc.active = 0;
 	strcpy(config.ephftp,DEFEPH);
 
@@ -422,6 +427,12 @@ void Sonde::checkConfig() {
 	if(config.sondehub.fimaxage>48) config.sondehub.fimaxage = 48;
 	if(config.sondehub.fimaxdist==0) config.sondehub.fimaxdist = 150;
 	if(config.sondehub.fimaxage==0) config.sondehub.fimaxage = 2;
+	config.tcpfeed.radiosondy_active = config.tcpfeed.radiosondy_active ? 1 : 0;
+	config.tcpfeed.rotate_active = config.tcpfeed.rotate_active ? 1 : 0;
+	strcpy(config.tcpfeed.host, "radiosondy.info:14580");
+	if(config.tcpfeed.host2[0] == 0) {
+		strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
+	}
 	// legacy ephftp: old-style %04d/%03d/%02d → replace with new default ($Y $D $y)
 	if(!strchr(sonde.config.ephftp,'$')) strcpy(sonde.config.ephftp,DEFEPH);
 	switch(strlen(config.beaconsym)) {

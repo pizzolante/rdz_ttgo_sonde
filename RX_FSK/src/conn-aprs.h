@@ -38,6 +38,10 @@ public:
 
 private:
 	void aprs_station_update();
+        void sendSondeToRadiosondy(SondeInfo *si);
+        void sendSondeToRotate(SondeInfo *si);
+        void sendBeaconToRadiosondy(float lat, float lon, int chase);
+        void sendBeaconToRotate(float lat, float lon, int chase);
 };
 
 extern ConnAPRS connAPRS;

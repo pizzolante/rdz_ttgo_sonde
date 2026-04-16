@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - test
+      - test-aprs
       - snapshot
 
 jobs:

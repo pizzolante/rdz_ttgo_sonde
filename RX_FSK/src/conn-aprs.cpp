@@ -21,6 +21,10 @@ static WiFiClient tncclient;
 // APRS over TCP for radiosondy.info etc
 // now we support up to two APRS connections (e.g. radiosondy.info, wettersonde.net)
 #define N_APRS 2
+#define APRS_PRIMARY_HOST "radiosondy.info:14580"
+#define APRS_SECONDARY_DEFAULT_HOST "rotate.aprs.net:14580"
+#define APRS_DEST_RADIOSONDY "APRRDZ"
+#define APRS_DEST_APRSIS "APRS,TCPIP*"
 struct st_aprs {
     int tcpclient;
     ip_addr_t tcpclient_ipaddr;
@@ -34,12 +38,50 @@ enum { TCS_DISCONNECTED, TCS_DNSLOOKUP, TCS_DNSRESOLVED, TCS_CONNECTING, TCS_LOG
 char udphost[64];
 int udpport;
 
-extern const char *version_name;
 extern const char *version_id;
 
 extern WiFiUDP udp;
 
 void tcpclient_fsm();
+
+static int aprs_index(const st_aprs *a) {
+    return (a == aprs) ? 0 : 1;
+}
+
+static const char *aprs_signature() {
+    return sonde.config.signature[0] ? sonde.config.signature : "RDZTTGO";
+}
+
+static const char *aprs_effective_host(const st_aprs *a) {
+    if (aprs_index(a) == 0) {
+        return APRS_PRIMARY_HOST;
+    }
+    if (sonde.config.tcpfeed.host2[0]) {
+        return sonde.config.tcpfeed.host2;
+    }
+    return APRS_SECONDARY_DEFAULT_HOST;
+}
+
+static const char *aprs_dest_for(const st_aprs *a) {
+    return (aprs_index(a) == 0) ? APRS_DEST_RADIOSONDY : APRS_DEST_APRSIS;
+}
+
+static const char *aprs_tail_for(const st_aprs *a) {
+    return (aprs_index(a) == 0) ? aprs_signature() : NULL;
+}
+
+static bool aprs_feed_enabled(int idx) {
+    if (!sonde.config.tcpfeed.active) return false;
+    if (idx == 0) return sonde.config.tcpfeed.radiosondy_active != 0;
+    return sonde.config.tcpfeed.rotate_active != 0;
+}
+
+static void aprs_write_line(st_aprs *a, const char *line) {
+    if (a->tcpclient_state != TCS_CONNECTED) return;
+    char out[APRS_MAXLEN + 3];
+    snprintf(out, sizeof(out), "%s\r\n", line);
+    write(a->tcpclient, out, strlen(out));
+}
 
 
 void ConnAPRS::init() {
@@ -76,7 +118,7 @@ void ConnAPRS::netshutdown() {
 
 void ConnAPRS::updateSonde( SondeInfo *si ) {
     // prepare data (for UDP and TCP output)
-    char *str = aprs_senddata(si, sonde.config.call, sonde.config.objcall, sonde.config.tcpfeed.symbol);
+    char *str = aprs_senddata(si, sonde.config.call, sonde.config.objcall, sonde.config.tcpfeed.symbol, APRS_DEST_RADIOSONDY, NULL);
 
     Serial.printf("udpfedd active: %d  tcpfeed active: %d\n", sonde.config.udpfeed.active, sonde.config.tcpfeed.active);
     unsigned long now = millis();
@@ -108,21 +150,26 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
     }
     // APRS via TCP (outgoing connection to aprs-is, e.g. radiosonde.info or wettersonde.net
     if (sonde.config.tcpfeed.active) {
-        static unsigned long lasttcp = 0;
+        static unsigned long lasttcp_radiosondy = 0;
+        static unsigned long lasttcp_rotate = 0;
         tcpclient_fsm();
-        if(aprs[0].tcpclient_state == TCS_CONNECTED || aprs[1].tcpclient_state == TCS_CONNECTED) {
-            long tts =  sonde.config.tcpfeed.highrate * 1000L - (now-lasttcp);
-            Serial.printf("aprs: now-last = %ld\n", (now - lasttcp));
-            if ( tts < 0 ) {
-                strcat(str, "\r\n");
-                Serial.printf("Sending APRS: %s",str);
-        if(aprs[0].tcpclient_state == TCS_CONNECTED)
-                    write(aprs[0].tcpclient, str, strlen(str));
-        if(aprs[1].tcpclient_state == TCS_CONNECTED)
-                    write(aprs[1].tcpclient, str, strlen(str));
-                lasttcp = now;
+        if (aprs_feed_enabled(0) && aprs[0].tcpclient_state == TCS_CONNECTED) {
+            long tts = sonde.config.tcpfeed.highrate * 1000L - (long)(now - lasttcp_radiosondy);
+            if (tts < 0) {
+                sendSondeToRadiosondy(si);
+                lasttcp_radiosondy = now;
             } else {
-                Serial.printf("Sending APRS in %d s\n", (int)(tts/1000));
+                Serial.printf("Sending APRS-radiosondy in %d s\n", (int)(tts/1000));
+            }
+        }
+        if (aprs_feed_enabled(1) && aprs[1].tcpclient_state == TCS_CONNECTED) {
+            int rotate_rate = sonde.config.tcpfeed.rotate_highrate > 0 ? sonde.config.tcpfeed.rotate_highrate : 60;
+            long tts = rotate_rate * 1000L - (long)(now - lasttcp_rotate);
+            if (tts < 0) {
+                sendSondeToRotate(si);
+                lasttcp_rotate = now;
+            } else {
+                Serial.printf("Sending APRS-rotate in %d s\n", (int)(tts/1000));
             }
         }
     }
@@ -134,7 +181,7 @@ static void check_timeout(st_aprs *a) {
     Serial.printf("Checking APRS timeout: last_in - new: %ld\n", millis() - a->last_in);
     if ( a->last_in && ( (millis() - a->last_in) > sonde.config.tcpfeed.timeout*1000 ) ) {
         Serial.println("APRS timeout - closing connection");
-        if(a->tcpclient>0) {
+        if(a->tcpclient >= 0) {
             close(a->tcpclient);
             a->tcpclient = -1;
         }
@@ -175,10 +222,73 @@ void ConnAPRS::updateStation( PosInfo *pi ) {
 
 static void aprs_beacon(char *bcn, st_aprs *aprs) {
   if(aprs->tcpclient_state == TCS_CONNECTED) {
-    strcat(bcn, "\r\n");
     Serial.printf("APRS TCP BEACON: %s", bcn);
-    write(aprs->tcpclient, bcn, strlen(bcn));
+    aprs_write_line(aprs, bcn);
   }
+}
+
+void ConnAPRS::sendSondeToRadiosondy(SondeInfo *si) {
+    if (!aprs_feed_enabled(0) || aprs[0].tcpclient_state != TCS_CONNECTED) return;
+    char *line = aprs_senddata(
+        si,
+        sonde.config.call,
+        sonde.config.objcall,
+        sonde.config.tcpfeed.symbol,
+        aprs_dest_for(aprs),
+        aprs_tail_for(aprs)
+    );
+    Serial.printf("Sending APRS radiosondy: %s\n", line);
+    aprs_write_line(aprs, line);
+}
+
+void ConnAPRS::sendSondeToRotate(SondeInfo *si) {
+    if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
+    char *line = aprs_senddata(
+        si,
+        sonde.config.call,
+        sonde.config.objcall,
+        sonde.config.tcpfeed.symbol,
+        aprs_dest_for(aprs + 1),
+        aprs_tail_for(aprs + 1)
+    );
+    Serial.printf("Sending APRS rotate: %s\n", line);
+    aprs_write_line(aprs + 1, line);
+}
+
+void ConnAPRS::sendBeaconToRadiosondy(float lat, float lon, int chase) {
+    if (!aprs_feed_enabled(0) || aprs[0].tcpclient_state != TCS_CONNECTED) return;
+    char *bcn = aprs_send_beacon(
+        sonde.config.call,
+        lat,
+        lon,
+        sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
+        sonde.config.comment,
+        aprs_dest_for(aprs),
+        aprs_tail_for(aprs)
+    );
+    aprs_beacon(bcn, aprs);
+}
+
+void ConnAPRS::sendBeaconToRotate(float lat, float lon, int chase) {
+    if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
+    const char *base_comment = sonde.config.rotate_comment[0] ? sonde.config.rotate_comment : sonde.config.comment;
+    // Build composite comment: "comment/device" — both fields shown on aprs.fi
+    char full_comment[66];
+    if (sonde.config.rotate_device[0]) {
+        snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, sonde.config.rotate_device);
+    } else {
+        strlcpy(full_comment, base_comment, sizeof(full_comment));
+    }
+    char *bcn = aprs_send_beacon(
+        sonde.config.call,
+        lat,
+        lon,
+        sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
+        full_comment,
+        aprs_dest_for(aprs + 1),
+        aprs_tail_for(aprs + 1)
+    );
+    aprs_beacon(bcn, aprs + 1);
 }
 
 void ConnAPRS::aprs_station_update() {
@@ -210,10 +320,10 @@ void ConnAPRS::aprs_station_update() {
       return;
     }
   }
-  char *bcn = aprs_send_beacon(sonde.config.call, lat, lon, sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0), sonde.config.comment);
   tcpclient_fsm();
-  aprs_beacon(bcn, aprs);
-  aprs_beacon(bcn, aprs+1);
+    // Beacon scheduling is independent from sonde RX traffic: this path is driven by updateStation().
+    sendBeaconToRadiosondy(lat, lon, chase);
+    sendBeaconToRotate(lat, lon, chase);
   time_last_aprs_update = time_now;
 }
 
@@ -230,13 +340,14 @@ static void _tcp_dns_found(const char * name, const ip_addr_t *ipaddr, void * ar
 
 void tcpclient_sendlogin(st_aprs *a) {
     char buf[128];
+    const char *agent = (aprs_index(a) == 0) ? aprs_signature() : "rdzttgo";
     a->conn_ts = esp_timer_get_time() / 1000000;
-    snprintf(buf, 128, "user %s pass %d vers %s %s\r\n", sonde.config.call, sonde.config.passcode, version_name, version_id);
+    snprintf(buf, 128, "user %s pass %d vers %s %s\r\n", sonde.config.call, sonde.config.passcode, agent, version_id);
     int res = write(a->tcpclient, buf, strlen(buf));
     Serial.printf("APRS login: %s, res=%d\n", buf, res);
     a->last_in = millis();
     if(res<=0) {
-        if( a->tcpclient>0 ) close(a->tcpclient);
+        if( a->tcpclient >= 0 ) close(a->tcpclient);
         a->tcpclient = -1;
         a->tcpclient_state = TCS_DISCONNECTED;
     }
@@ -251,17 +362,17 @@ void tcpclient_fsm() {
 }
  
 static void tcpclient_fsm_single(st_aprs *a) {
-    if(!sonde.config.tcpfeed.active)
+    int idx = aprs_index(a);
+    if(!aprs_feed_enabled(idx)) {
+        if (a->tcpclient >= 0) {
+            close(a->tcpclient);
+        }
+        a->tcpclient = -1;
+        a->tcpclient_state = TCS_DISCONNECTED;
         return;
-        
-    Serial.printf("TCS[%d]: %d\n", a==aprs?0:1, a->tcpclient_state);
+    }
 
-    fd_set fdset;
-    FD_ZERO(&fdset);
-    FD_SET(a->tcpclient, &fdset);
-    fd_set fdeset;
-    FD_ZERO(&fdeset);
-    FD_SET(a->tcpclient, &fdeset);
+    Serial.printf("TCS[%d]: %d\n", idx, a->tcpclient_state);
 
     struct timeval selto = {0};
     int res;
@@ -273,7 +384,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
         // Restart timeout
         a->last_in = millis();
         char host[256];
-        strcpy(host, a==aprs ? sonde.config.tcpfeed.host : sonde.config.tcpfeed.host2 );
+                strlcpy(host, aprs_effective_host(a), sizeof(host));
         char *colon =strchr(host, ':');
         if(colon) {
             *colon = 0;
@@ -281,7 +392,11 @@ static void tcpclient_fsm_single(st_aprs *a) {
         } else {
 	    a->port = 14580;
         }
-        Serial.printf("aprs %d: host is '%s', port %d\n", a==aprs?0:1, host, a->port);
+                if (idx == 1 && host[0] == 0) {
+                        a->tcpclient_state = TCS_DISCONNECTED;
+                        break;
+                }
+                Serial.printf("aprs %d: host is '%s', port %d\n", idx, host, a->port);
         err_t res = dns_gethostbyname( host, &a->tcpclient_ipaddr, /*(dns_found_callback)*/_tcp_dns_found, a );
 
         if(res == ERR_OK) {   // Returns immediately of host is IP or in cache
@@ -327,6 +442,12 @@ static void tcpclient_fsm_single(st_aprs *a) {
       break;
     case TCS_CONNECTING: 
       {
+                fd_set fdset;
+                FD_ZERO(&fdset);
+                FD_SET(a->tcpclient, &fdset);
+                fd_set fdeset;
+                FD_ZERO(&fdeset);
+                FD_SET(a->tcpclient, &fdeset);
         // Poll to see if we are now connected 
         res = select(a->tcpclient+1, NULL, &fdset, &fdeset, &selto);
         if(res<0) {
@@ -354,6 +475,9 @@ static void tcpclient_fsm_single(st_aprs *a) {
         
     case TCS_CONNECTED:
       {
+                fd_set fdset;
+                FD_ZERO(&fdset);
+                FD_SET(a->tcpclient, &fdset);
         res = select(a->tcpclient+1, &fdset, NULL, NULL, &selto);
         if(res<0) {
             Serial.println("TCS_CONNECTED: select error");
@@ -384,7 +508,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
     return;
 
 error:
-    if(a->tcpclient > 0) close(a->tcpclient);
+    if(a->tcpclient >= 0) close(a->tcpclient);
     a->tcpclient = -1;
     a->tcpclient_state = TCS_DISCONNECTED;
     return;
@@ -413,14 +537,14 @@ String ConnAPRS::getStatus() {
     // APRS client
     if(sonde.config.tcpfeed.active==0) strlcat(buf, "APRS: disabled", 1024);
     else {
-        snprintf( buf+strlen(buf), 1024-strlen(buf), "APRS: %s [%s]", aprsstate2str(aprs[0].tcpclient_state), sonde.config.tcpfeed.host);
+        snprintf( buf+strlen(buf), 1024-strlen(buf), "APRS: %s [%s] (%s)", aprsstate2str(aprs[0].tcpclient_state), aprs_effective_host(aprs), aprs_feed_enabled(0) ? "ON" : "OFF");
         uint32_t uptime = esp_timer_get_time() / 1000000;
         Serial.printf("up %d c1 %d c2%d\n", uptime, aprs[0].conn_ts, aprs[1].conn_ts);
         if(aprs[0].tcpclient_state == TCS_CONNECTED) {
             strlcat(buf, ", up: ", 1024);
             appendUptime(buf, 1024, uptime - aprs[0].conn_ts);
         }
-        snprintf( buf+strlen(buf), 1024-strlen(buf), "<br>APRS2: %s [%s]", aprsstate2str(aprs[1].tcpclient_state), sonde.config.tcpfeed.host2);
+        snprintf( buf+strlen(buf), 1024-strlen(buf), "<br>APRS2: %s [%s] (%s)", aprsstate2str(aprs[1].tcpclient_state), aprs_effective_host(aprs+1), aprs_feed_enabled(1) ? "ON" : "OFF");
         if(aprs[1].tcpclient_state == TCS_CONNECTED) {
             strlcat(buf, ", up: ", 1024);
             appendUptime(buf, 1024, uptime - aprs[1].conn_ts);

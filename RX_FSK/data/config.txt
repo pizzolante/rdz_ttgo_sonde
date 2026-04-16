@@ -107,16 +107,25 @@ axudp.ratelimit=1
 # connect to some aprs server
 #-------------------------------#
 tcp.active=0
+tcp.radiosondy.active=0
+tcp.rotate.active=0
+# host1 is forced by firmware to radiosondy.info:14580
 tcp.host=radiosondy.info:14580
-#tcp.host2=wettersonde.net:14580
+# recommended second uplink
+tcp.host2=rotate.aprs.net:14580
+# custom signature for radiosondy login/beacon
+tcp.signature=RDZTTGO
 # Currently this is fixed...
 # tcp.symbol=/O
-tcp.highrate=20
+tcp.highrate=10
+tcp.rotate.highrate=60
 # send beacon (possibly with different call or SSID)
 tcp.chase=0
 tcp.objcall=
 tcp.beaconsym=/`/(
 tcp.comment=
+tcp.rotate.comment=
+tcp.rotate.device=RDZTTGO
 #-------------------------------#
 # mqtt settings
 #-------------------------------#
