@@ -51,6 +51,9 @@
 #if FEATURE_MQTT
 #include "src/conn-mqtt.h"
 #endif
+#if FEATURE_TELEGRAM
+#include "src/conn-telegram.h"
+#endif
 #if FEATURE_SDCARD
 #include "src/conn-sdcard.h"
 #endif
@@ -81,6 +84,9 @@ Conn *connectors[] = { &connSystem,
 #endif
 #if FEATURE_MQTT
 &connMQTT,
+#endif
+#if FEATURE_TELEGRAM
+&connTelegram,
 #endif
 #if FEATURE_SDCARD
 &connSDCard,
@@ -804,6 +810,16 @@ struct st_configitems config_list[] = {
   {"mqtt.prefix", 63, &sonde.config.mqtt.prefix},
   {"mqtt.report_interval", 0, &sonde.config.mqtt.report_interval},
 #endif
+#if FEATURE_TELEGRAM
+  /* Telegram */
+  {"telegram.active", 0, &sonde.config.telegram.active},
+  {"telegram.token", 63, &sonde.config.telegram.token},
+  {"telegram.chat_id", 31, &sonde.config.telegram.chat_id},
+  {"telegram.notify_new", 0, &sonde.config.telegram.notify_new},
+  {"telegram.notify_burst", 0, &sonde.config.telegram.notify_burst},
+  {"telegram.notify_end", 0, &sonde.config.telegram.notify_end},
+  {"telegram.end_delay", 0, &sonde.config.telegram.end_delay},
+#endif
 #if FEATURE_SDCARD
   /* SD-Card settings */
   {"sd.cs", 0, &sonde.config.sd.cs},
@@ -973,6 +989,9 @@ const char *ctrlid[] = {"rx", "scan", "spec", "wifi", "rx2", "scan2", "spec2", "
 #if FEATURE_SDCARD
 	"format",
 #endif
+#if FEATURE_TELEGRAM
+  "tgtest",
+#endif
         "reboot"};
 
 const char *ctrllabel[] = {"Receiver/next freq. (short keypress)", "Scanner (double keypress)", "Spectrum (medium keypress)", "WiFi (long keypress)",
@@ -983,6 +1002,7 @@ const char *ctrllabel[] = {"Receiver/next freq. (short keypress)", "Scanner (dou
 #if FEATURE_SDCARD
 			   "Format SD Card",
 #endif
+			   "Send last frame to Telegram",
 			   "Reboot"
                           };
 
@@ -1047,6 +1067,11 @@ const char *handleControlPost(AsyncWebServerRequest * request) {
     else if (param.equals("format")) {
       button2.pressed = KP_FORMAT;
     }
+#if FEATURE_TELEGRAM
+    else if (param.equals("tgtest")) {
+      connTelegram.sendLastFrameTest();
+    }
+#endif
     else if (param.equals("reboot")) {
       ESP.restart();
     }

@@ -1,0 +1,168 @@
+name: Build and Release TTGO Firmware
+
+on:
+  push:
+    branches:
+      - test
+      - snapshot
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '#nobuild')"
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      
+      - name: Install PlatformIO
+        run: |
+          python -m pip install --upgrade pip
+          pip install platformio esptool
+      
+      - name: Build firmware
+        run: pio run -e ttgo-lora32
+      
+      - name: Verify firmware build output
+        run: |
+          [ -f ".pio/build/ttgo-lora32/firmware.bin" ] || { echo "ERROR: firmware.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/bootloader.bin" ] || { echo "ERROR: bootloader.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/partitions.bin" ] || { echo "ERROR: partitions.bin not generated"; exit 1; }
+          [ -f ".pio/build/ttgo-lora32/fonts.bin" ] || { echo "ERROR: fonts.bin not generated"; exit 1; }
+          echo "✓ Firmware build artifacts verified"
+
+      - name: Build filesystem image
+        run: pio run -e ttgo-lora32 -t buildfs
+      
+      - name: Verify filesystem build output
+        run: |
+          [ -f ".pio/build/ttgo-lora32/littlefs.bin" ] || { echo "ERROR: littlefs.bin not generated"; exit 1; }
+          echo "✓ Filesystem build artifacts verified"
+      
+      - name: Get version info
+        id: version
+        run: |
+          # Estrae la versione dal file version.h se esiste
+          if [ -f "RX_FSK/version.h" ]; then
+            VERSION=$(grep -oP 'version_id = "\K[^"]+' RX_FSK/version.h || echo "dev")
+          else
+            VERSION="dev"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
+          echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          
+          # Verify all required binaries exist before proceeding
+          for file in bootloader.bin partitions.bin firmware.bin fonts.bin littlefs.bin; do
+            [ -f ".pio/build/ttgo-lora32/$file" ] || { echo "FATAL: $file not found"; exit 1; }
+          done
+          
+          # Firmware UPDATE (solo app, per aggiornamento OTA o via USB mantenendo i dati)
+          cp .pio/build/ttgo-lora32/firmware.bin release/rdz_ttgo_sonde_update.bin
+          
+          # Firmware MAIN (flash completo con bootloader, partitions, firmware, fonts e filesystem)
+          # Offsets da partitions-rdz.csv:
+          # 0x1000: bootloader
+          # 0x8000: partitions
+          # 0x10000: app0 (firmware)
+          # 0x310000: fonts (size 0x10000)
+          # 0x320000: spiffs/littlefs (size 0xD0000)
+          python -m esptool --chip esp32 merge_bin -o release/rdz_ttgo_sonde_main.bin --flash_mode dio --flash_size 4MB \
+            0x1000 .pio/build/ttgo-lora32/bootloader.bin \
+            0x8000 .pio/build/ttgo-lora32/partitions.bin \
+            0x10000 .pio/build/ttgo-lora32/firmware.bin \
+            0x310000 .pio/build/ttgo-lora32/fonts.bin \
+            0x320000 .pio/build/ttgo-lora32/littlefs.bin
+          
+          [ -f "release/rdz_ttgo_sonde_main.bin" ] || { echo "FATAL: merge_bin failed"; exit 1; }
+          echo "✓ Release files prepared successfully"
+          
+          # Crea un file con informazioni sulla build
+          echo "Build: ${{ steps.version.outputs.version }}" > release/BUILD-INFO.txt
+          echo "Commit: ${{ github.sha }}" >> release/BUILD-INFO.txt
+          echo "Date: $(date)" >> release/BUILD-INFO.txt
+          echo "" >> release/BUILD-INFO.txt
+          echo "Files:" >> release/BUILD-INFO.txt
+          echo "- rdz_ttgo_sonde_main.bin: Flash completo (include bootloader, partitions, firmware, fonts, filesystem)" >> release/BUILD-INFO.txt
+          echo "- rdz_ttgo_sonde_update.bin: Solo firmware per aggiornamento (mantiene configurazione)" >> release/BUILD-INFO.txt
+      
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}-${{ steps.version.outputs.timestamp }}-${{ steps.version.outputs.short_sha }}
+          release_name: ${{ github.ref_name }} Build ${{ steps.version.outputs.version }} (${{ steps.version.outputs.timestamp }})
+          body: |
+            ## 🚀 Build automatica da branch ${{ github.ref_name }}
+            
+            **Versione:** ${{ steps.version.outputs.version }}
+            **Commit:** ${{ github.sha }}
+            **Data:** ${{ steps.version.outputs.timestamp }}
+            
+            ### 📥 Files disponibili
+            
+            - **rdz_ttgo_sonde_main.bin**: Flash completo (bootloader + partitions + firmware + fonts + filesystem)
+              - Usa questo per la prima installazione o per ripristinare completamente il dispositivo
+              - ⚠️ Cancella tutte le configurazioni e i dati salvati
+            
+            - **rdz_ttgo_sonde_update.bin**: Solo firmware per aggiornamento
+              - Usa questo per aggiornare mantenendo configurazioni e dati
+              - Ideale per aggiornamenti via OTA o USB
+            
+            ### 📥 Come flashare
+            
+            **Flash completo (prima installazione):**
+            ```bash
+            python -m esptool --port /dev/ttyUSB0 write_flash 0x0 rdz_ttgo_sonde_main.bin
+            ```
+            
+            **Aggiornamento (mantiene configurazione):**
+            ```bash
+            python -m esptool --port /dev/ttyUSB0 write_flash 0x10000 rdz_ttgo_sonde_update.bin
+            ```
+            
+            ### ⚠️ Nota
+            Questa è una build automatica dal branch ${{ github.ref_name }}. Potrebbe non essere stabile.
+          draft: false
+          prerelease: ${{ github.ref_name == 'snapshot' }}
+      
+      - name: Upload Firmware MAIN
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/rdz_ttgo_sonde_main.bin
+          asset_name: rdz_ttgo_sonde_main.bin
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Firmware UPDATE
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/rdz_ttgo_sonde_update.bin
+          asset_name: rdz_ttgo_sonde_update.bin
+          asset_content_type: application/octet-stream
+      
+      - name: Upload Build Info
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./release/BUILD-INFO.txt
+          asset_name: BUILD-INFO.txt
+          asset_content_type: text/plain

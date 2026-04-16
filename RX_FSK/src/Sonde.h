@@ -240,6 +240,16 @@ struct st_ss {
  	char host[64];
  	int port;
  };
+
+struct st_telegram {
+	int active;
+	char token[64];
+	char chat_id[32];
+	int notify_new;
+	int notify_burst;
+	int notify_end;
+	int end_delay;
+};
  
 struct st_sondehub {
 	int active;
@@ -335,6 +345,7 @@ typedef struct st_rdzconfig {
 	struct st_cm cm;
 	struct st_sdcard sd;
 	struct st_ss ss;
+	struct st_telegram telegram;
 } RDZConfig;
 
 
