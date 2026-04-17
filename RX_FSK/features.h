@@ -11,7 +11,6 @@
 #define FEATURE_MQTT 1
 #define FEATURE_SDCARD 0
 #define FEATURE_APRS 1
-#define FEATURE_TELEGRAM 0
 
 
 // Additional optional components
