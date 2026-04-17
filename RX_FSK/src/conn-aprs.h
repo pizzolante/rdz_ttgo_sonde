@@ -12,6 +12,8 @@
 #define APRS_MOBILE_STATION_UPDATE_TIME (20*1000)
 
 static unsigned long time_last_aprs_update = -APRS_STATION_UPDATE_TIME;
+static unsigned long time_last_rotate_beacon = -APRS_STATION_UPDATE_TIME;
+static unsigned long time_last_sonde_rx = 0;
 
 
 class ConnAPRS : public Conn

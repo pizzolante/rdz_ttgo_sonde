@@ -202,9 +202,10 @@ struct st_axudpinfo {
 };
 
 struct st_aprsinfo {
-        int active;
 	int radiosondy_active;
 	int rotate_active;
+	int rotate_beacon_interval;
+	int smart_beacon_rotate;
         char host[64];
         char host2[64];
         char symbol[3];

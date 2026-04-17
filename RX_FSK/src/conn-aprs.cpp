@@ -4,6 +4,7 @@
 
 #include "conn-aprs.h"
 #include "aprs.h"
+#include "pmu.h"
 #include "posinfo.h"
 #include <ESPmDNS.h>
 #include <WiFi.h>
@@ -24,7 +25,7 @@ static WiFiClient tncclient;
 #define APRS_PRIMARY_HOST "radiosondy.info:14580"
 #define APRS_SECONDARY_DEFAULT_HOST "rotate.aprs.net:14580"
 #define APRS_DEST_RADIOSONDY "APRRDZ"
-#define APRS_DEST_APRSIS "APRS,TCPIP*"
+#define APRS_DEST_APRSIS "APRDZ1,TCPIP*"
 struct st_aprs {
     int tcpclient;
     ip_addr_t tcpclient_ipaddr;
@@ -32,6 +33,9 @@ struct st_aprs {
     unsigned long last_in;
     uint8_t tcpclient_state;
     uint32_t conn_ts;
+    uint16_t telem_seq;
+    unsigned long telem_last_sent;
+    bool telem_meta_sent;
 } aprs[2]={0}; 
 enum { TCS_DISCONNECTED, TCS_DNSLOOKUP, TCS_DNSRESOLVED, TCS_CONNECTING, TCS_LOGIN, TCS_CONNECTED };
 
@@ -39,6 +43,7 @@ char udphost[64];
 int udpport;
 
 extern const char *version_id;
+extern PMU *pmu;
 
 extern WiFiUDP udp;
 
@@ -71,9 +76,121 @@ static const char *aprs_tail_for(const st_aprs *a) {
 }
 
 static bool aprs_feed_enabled(int idx) {
-    if (!sonde.config.tcpfeed.active) return false;
     if (idx == 0) return sonde.config.tcpfeed.radiosondy_active != 0;
     return sonde.config.tcpfeed.rotate_active != 0;
+}
+
+static float get_local_batt_voltage();
+static void aprs_write_line(st_aprs *a, const char *line);
+
+typedef struct {
+    float sonde_temp;
+    float sonde_rh;
+    float sonde_pressure;
+    float sonde_sats;
+    float sonde_vs;
+    bool has_sonde_temp;
+    bool has_sonde_rh;
+    bool has_sonde_pressure;
+    bool has_sonde_sats;
+    bool has_sonde_vs;
+} st_aprs_telem_cache;
+
+static st_aprs_telem_cache aprs_telem_cache = {0};
+
+static int telem_scale(float value, float minv, float maxv) {
+    if (isnan(value) || maxv <= minv) return 0;
+    if (value < minv) value = minv;
+    if (value > maxv) value = maxv;
+    return (int)((value - minv) * 255.0f / (maxv - minv) + 0.5f);
+}
+
+static void aprs_send_telem_meta(st_aprs *a) {
+    char line[APRS_MAXLEN + 1];
+    snprintf(line, sizeof(line), "%s>%s:PARM.Temp,RH,Press,Sats,Clb", sonde.config.call, aprs_dest_for(a));
+    aprs_write_line(a, line);
+    snprintf(line, sizeof(line), "%s>%s:UNIT.C,%%,hPa,sat,m/s", sonde.config.call, aprs_dest_for(a));
+    aprs_write_line(a, line);
+    // Engineering value = a*x^2 + b*x + c, with x in [0..255]
+    snprintf(line, sizeof(line), "%s>%s:EQNS.0,0.58824,-90,0,0.39216,0,0,4.31373,0,0,0.07843,0,0,0.39216,-50", sonde.config.call, aprs_dest_for(a));
+    aprs_write_line(a, line);
+    a->telem_meta_sent = true;
+}
+
+static void aprs_send_telem_sample(st_aprs *a, unsigned long now) {
+    if (a->tcpclient_state != TCS_CONNECTED) return;
+    if (!a->telem_meta_sent) {
+        aprs_send_telem_meta(a);
+    }
+    if ((now - a->telem_last_sent) < 60000UL) return;
+
+    int v1 = telem_scale(aprs_telem_cache.has_sonde_temp ? aprs_telem_cache.sonde_temp : -90.0f, -90.0f, 60.0f);
+    int v2 = telem_scale(aprs_telem_cache.has_sonde_rh ? aprs_telem_cache.sonde_rh : 0.0f, 0.0f, 100.0f);
+    int v3 = telem_scale(aprs_telem_cache.has_sonde_pressure ? aprs_telem_cache.sonde_pressure : 0.0f, 0.0f, 1100.0f);
+    int v4 = telem_scale(aprs_telem_cache.has_sonde_sats ? aprs_telem_cache.sonde_sats : 0.0f, 0.0f, 20.0f);
+    int v5 = telem_scale(aprs_telem_cache.has_sonde_vs ? aprs_telem_cache.sonde_vs : -50.0f, -50.0f, 50.0f);
+
+    char bits[9];
+    bits[0] = aprs_telem_cache.has_sonde_temp ? '1' : '0';
+    bits[1] = aprs_telem_cache.has_sonde_rh ? '1' : '0';
+    bits[2] = aprs_telem_cache.has_sonde_pressure ? '1' : '0';
+    bits[3] = aprs_telem_cache.has_sonde_sats ? '1' : '0';
+    bits[4] = aprs_telem_cache.has_sonde_vs ? '1' : '0';
+    bits[5] = '0';
+    bits[6] = '0';
+    bits[7] = '0';
+    bits[8] = 0;
+
+    char line[APRS_MAXLEN + 1];
+    snprintf(line, sizeof(line), "%s>%s:T#%03u,%03d,%03d,%03d,%03d,%03d,%s", sonde.config.call, aprs_dest_for(a), a->telem_seq % 1000, v1, v2, v3, v4, v5, bits);
+    aprs_write_line(a, line);
+    a->telem_seq = (a->telem_seq + 1) % 1000;
+    a->telem_last_sent = now;
+}
+
+static void aprs_update_telem_cache(SondeInfo *si) {
+    SondeData *s = &(si->d);
+    if (!isnan(s->temperature)) {
+        aprs_telem_cache.sonde_temp = s->temperature;
+        aprs_telem_cache.has_sonde_temp = true;
+    }
+    if (!isnan(s->relativeHumidity)) {
+        aprs_telem_cache.sonde_rh = s->relativeHumidity;
+        aprs_telem_cache.has_sonde_rh = true;
+    }
+    if (!isnan(s->pressure)) {
+        aprs_telem_cache.sonde_pressure = s->pressure;
+        aprs_telem_cache.has_sonde_pressure = true;
+    }
+    if (VALIDSATS(s->validPos)) {
+        aprs_telem_cache.sonde_sats = s->sats;
+        aprs_telem_cache.has_sonde_sats = true;
+    }
+    if (!isnan(s->vs)) {
+        aprs_telem_cache.sonde_vs = s->vs;
+        aprs_telem_cache.has_sonde_vs = true;
+    }
+}
+
+static float get_local_batt_voltage() {
+    if(!pmu) {
+        return getBattNoPMU();
+    }
+    return pmu->getBattVoltage() * 0.001f;
+}
+
+static void build_comment_with_batt(char *dst, size_t dst_len, const char *base_comment) {
+    if (dst_len == 0) return;
+    float batt = get_local_batt_voltage();
+    if (isnan(batt) || batt <= 0.0f) {
+        strlcpy(dst, base_comment ? base_comment : "", dst_len);
+        return;
+    }
+    if (base_comment && base_comment[0]) {
+        snprintf(dst, dst_len, "%s Batt: %.2fV", base_comment, batt);
+    } else {
+        snprintf(dst, dst_len, "Batt: %.2fV", batt);
+    }
 }
 
 static void aprs_write_line(st_aprs *a, const char *line) {
@@ -117,6 +234,8 @@ void ConnAPRS::netshutdown() {
 }
 
 void ConnAPRS::updateSonde( SondeInfo *si ) {
+    time_last_sonde_rx = millis();
+    aprs_update_telem_cache(si);
     // prepare data (for UDP and TCP output)
     char *str = aprs_senddata(si, sonde.config.call, sonde.config.objcall, sonde.config.tcpfeed.symbol, APRS_DEST_RADIOSONDY, NULL);
 
@@ -161,6 +280,7 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
             } else {
                 Serial.printf("Sending APRS-radiosondy in %d s\n", (int)(tts/1000));
             }
+            aprs_send_telem_sample(aprs, now);
         }
         if (aprs_feed_enabled(1) && aprs[1].tcpclient_state == TCS_CONNECTED) {
             int rotate_rate = sonde.config.tcpfeed.rotate_highrate > 0 ? sonde.config.tcpfeed.rotate_highrate : 60;
@@ -171,6 +291,7 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
             } else {
                 Serial.printf("Sending APRS-rotate in %d s\n", (int)(tts/1000));
             }
+            aprs_send_telem_sample(aprs + 1, now);
         }
     }
 }
@@ -257,12 +378,14 @@ void ConnAPRS::sendSondeToRotate(SondeInfo *si) {
 
 void ConnAPRS::sendBeaconToRadiosondy(float lat, float lon, int chase) {
     if (!aprs_feed_enabled(0) || aprs[0].tcpclient_state != TCS_CONNECTED) return;
+    char comment_with_batt[96];
+    build_comment_with_batt(comment_with_batt, sizeof(comment_with_batt), sonde.config.comment);
     char *bcn = aprs_send_beacon(
         sonde.config.call,
         lat,
         lon,
         sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
-        sonde.config.comment,
+        comment_with_batt,
         aprs_dest_for(aprs),
         aprs_tail_for(aprs)
     );
@@ -275,16 +398,32 @@ void ConnAPRS::sendBeaconToRotate(float lat, float lon, int chase) {
     // Build composite comment: "comment/device" — both fields shown on aprs.fi
     char full_comment[66];
     if (sonde.config.rotate_device[0]) {
-        snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, sonde.config.rotate_device);
+        const char *device = sonde.config.rotate_device;
+        // Avoid duplicated text like "Tracker Radiosonde/Tracker Radiosonde LilyGO TTGO".
+        if (base_comment[0] && strncmp(device, base_comment, strlen(base_comment)) == 0) {
+            const char *trimmed = device + strlen(base_comment);
+            while (*trimmed == ' ' || *trimmed == '-' || *trimmed == '/' || *trimmed == ':') trimmed++;
+            if (*trimmed) {
+                snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, trimmed);
+            } else {
+                strlcpy(full_comment, base_comment, sizeof(full_comment));
+            }
+        } else if (base_comment[0]) {
+            snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, device);
+        } else {
+            strlcpy(full_comment, device, sizeof(full_comment));
+        }
     } else {
         strlcpy(full_comment, base_comment, sizeof(full_comment));
     }
+    char comment_with_batt[96];
+    build_comment_with_batt(comment_with_batt, sizeof(comment_with_batt), full_comment);
     char *bcn = aprs_send_beacon(
         sonde.config.call,
         lat,
         lon,
         sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
-        full_comment,
+        comment_with_batt,
         aprs_dest_for(aprs + 1),
         aprs_tail_for(aprs + 1)
     );
@@ -323,7 +462,15 @@ void ConnAPRS::aprs_station_update() {
   tcpclient_fsm();
     // Beacon scheduling is independent from sonde RX traffic: this path is driven by updateStation().
     sendBeaconToRadiosondy(lat, lon, chase);
-    sendBeaconToRotate(lat, lon, chase);
+    unsigned long rotate_interval = (unsigned long)sonde.config.tcpfeed.rotate_beacon_interval * 60000UL;
+    bool rotate_smart = sonde.config.tcpfeed.smart_beacon_rotate != 0;
+    bool sonde_active = rotate_smart ? (time_last_sonde_rx > 0 && (time_now - time_last_sonde_rx) < rotate_interval) : true;
+    if (sonde_active && (time_now - time_last_rotate_beacon) >= rotate_interval) {
+      sendBeaconToRotate(lat, lon, chase);
+      time_last_rotate_beacon = time_now;
+    }
+        aprs_send_telem_sample(aprs, time_now);
+        aprs_send_telem_sample(aprs + 1, time_now);
   time_last_aprs_update = time_now;
 }
 
@@ -369,6 +516,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
         }
         a->tcpclient = -1;
         a->tcpclient_state = TCS_DISCONNECTED;
+        a->telem_meta_sent = false;
         return;
     }
 
@@ -492,6 +640,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
             close(a->tcpclient);
             a->tcpclient = -1;
             a->tcpclient_state = TCS_DISCONNECTED;
+            a->telem_meta_sent = false;
         } else {
             buf[res] = 0;
             Serial.printf("tcpclient data (len=%d):", res);
@@ -511,6 +660,7 @@ error:
     if(a->tcpclient >= 0) close(a->tcpclient);
     a->tcpclient = -1;
     a->tcpclient_state = TCS_DISCONNECTED;
+    a->telem_meta_sent = false;
     return;
 }
 

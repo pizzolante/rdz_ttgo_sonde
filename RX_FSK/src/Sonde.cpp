@@ -390,9 +390,10 @@ void Sonde::defaultConfig() {
 	config.udpfeed.active = 1;
 	strcpy(config.udpfeed.host, "192.168.42.20:9002");
 	config.udpfeed.ratelimit= 1;
-	config.tcpfeed.active = 0;
 	config.tcpfeed.radiosondy_active = 0;
 	config.tcpfeed.rotate_active = 0;
+	config.tcpfeed.rotate_beacon_interval = 15;
+	config.tcpfeed.smart_beacon_rotate = 1;
 	strcpy(config.tcpfeed.host, "radiosondy.info:14580");
 	strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
 	strcpy(config.tcpfeed.symbol, "/O");

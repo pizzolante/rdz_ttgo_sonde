@@ -777,9 +777,10 @@ struct st_configitems config_list[] = {
   {"axudp.host", 63, sonde.config.udpfeed.host},
   {"axudp.ratelimit", 0, &sonde.config.udpfeed.ratelimit},
   /* APRS TCP settings */
-  {"tcp.active", -3, &sonde.config.tcpfeed.active},
   {"tcp.radiosondy.active", -3, &sonde.config.tcpfeed.radiosondy_active},
   {"tcp.rotate.active", -3, &sonde.config.tcpfeed.rotate_active},
+  {"tcp.rotate.beacon_interval", 0, &sonde.config.tcpfeed.rotate_beacon_interval},
+  {"tcp.rotate.smart_beacon", -3, &sonde.config.tcpfeed.smart_beacon_rotate},
   {"tcp.timeout", 0, &sonde.config.tcpfeed.timeout},
   {"tcp.host", 63, sonde.config.tcpfeed.host},
   {"tcp.host2", 63, &sonde.config.tcpfeed.host2},

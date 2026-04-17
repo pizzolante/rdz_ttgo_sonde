@@ -349,6 +349,9 @@ char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, co
 	if( !isnan(s->relativeHumidity) ) {
 		sprintf(b+strlen(b), "h=%.1f%% ", s->relativeHumidity);
 	}
+	if( !isnan(s->batteryVoltage) && s->batteryVoltage > 0 ) {
+		sprintf(b+strlen(b), "Batt=%.2fV ", s->batteryVoltage);
+	}
 	char type[12];
         if ( si->type == STYPE_RS41 && RS41::getSubtype(type, 11, si) == 0 ) {
 	    // type was copied to type
