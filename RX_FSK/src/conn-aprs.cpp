@@ -394,27 +394,41 @@ void ConnAPRS::sendBeaconToRadiosondy(float lat, float lon, int chase) {
 
 void ConnAPRS::sendBeaconToRotate(float lat, float lon, int chase) {
     if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
+    // Rotate beacon fields are separated as comment + author/device/type.
+    char full_comment[96];
     const char *base_comment = sonde.config.rotate_comment[0] ? sonde.config.rotate_comment : sonde.config.comment;
-    // Build composite comment: "comment/device" — both fields shown on aprs.fi
-    char full_comment[66];
-    if (sonde.config.rotate_device[0]) {
-        const char *device = sonde.config.rotate_device;
-        // Avoid duplicated text like "Tracker Radiosonde/Tracker Radiosonde LilyGO TTGO".
-        if (base_comment[0] && strncmp(device, base_comment, strlen(base_comment)) == 0) {
-            const char *trimmed = device + strlen(base_comment);
-            while (*trimmed == ' ' || *trimmed == '-' || *trimmed == '/' || *trimmed == ':') trimmed++;
-            if (*trimmed) {
-                snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, trimmed);
-            } else {
-                strlcpy(full_comment, base_comment, sizeof(full_comment));
-            }
-        } else if (base_comment[0]) {
-            snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, device);
+    const char *author = sonde.config.rotate_author;
+    const char *device = sonde.config.rotate_device;
+    const char *dtype = sonde.config.rotate_type;
+    char device_info[80];
+    if (author[0] || device[0] || dtype[0]) {
+        if (author[0] && device[0] && dtype[0]) {
+            snprintf(device_info, sizeof(device_info), "%s/%s/%s", author, device, dtype);
+        } else if (author[0] && device[0]) {
+            snprintf(device_info, sizeof(device_info), "%s/%s", author, device);
+        } else if (author[0] && dtype[0]) {
+            snprintf(device_info, sizeof(device_info), "%s/%s", author, dtype);
+        } else if (device[0] && dtype[0]) {
+            snprintf(device_info, sizeof(device_info), "%s/%s", device, dtype);
+        } else if (author[0]) {
+            strlcpy(device_info, author, sizeof(device_info));
+        } else if (device[0]) {
+            strlcpy(device_info, device, sizeof(device_info));
         } else {
-            strlcpy(full_comment, device, sizeof(full_comment));
+            strlcpy(device_info, dtype, sizeof(device_info));
         }
     } else {
+        device_info[0] = 0;
+    }
+
+    if (base_comment[0] && device_info[0]) {
+        snprintf(full_comment, sizeof(full_comment), "%s/%s", base_comment, device_info);
+    } else if (base_comment[0]) {
         strlcpy(full_comment, base_comment, sizeof(full_comment));
+    } else if (device_info[0]) {
+        strlcpy(full_comment, device_info, sizeof(full_comment));
+    } else {
+        full_comment[0] = 0;
     }
     char comment_with_batt[96];
     build_comment_with_batt(comment_with_batt, sizeof(comment_with_batt), full_comment);

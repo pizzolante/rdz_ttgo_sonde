@@ -52,6 +52,32 @@ const char *fingerprintText[]={
   "CYB (USB-C) w/ SPI display + Ra02",
 };
 
+static void default_rotate_device_from_fingerprint(int fingerprint, char *dst, size_t dst_len) {
+	const char *fallback = "LilyGO TTGO";
+	const char *fpstr = NULL;
+	for (int i = 0; fingerprintValue[i] != -1; i++) {
+		if (fingerprintValue[i] == fingerprint) {
+			fpstr = fingerprintText[i];
+			break;
+		}
+	}
+	if (fpstr == NULL || fpstr[0] == 0) {
+		strlcpy(dst, fallback, dst_len);
+		return;
+	}
+
+	const char *end = strchr(fpstr, '(');
+	size_t n = end ? (size_t)(end - fpstr) : strlen(fpstr);
+	while (n > 0 && fpstr[n - 1] == ' ') n--;
+	if (n == 0) {
+		strlcpy(dst, fallback, dst_len);
+		return;
+	}
+	if (n >= dst_len) n = dst_len - 1;
+	memcpy(dst, fpstr, n);
+	dst[n] = 0;
+}
+
 /* global variables from RX_FSK.ino */
 int getKeyPressEvent(); 
 int handlePMUirq();
@@ -398,7 +424,9 @@ void Sonde::defaultConfig() {
 	strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
 	strcpy(config.tcpfeed.symbol, "/O");
 	config.rotate_comment[0] = 0;
-	config.rotate_device[0] = 0;
+	strcpy(config.rotate_author, "rdzTTGOsonde");
+	default_rotate_device_from_fingerprint(fingerprint, config.rotate_device, sizeof(config.rotate_device));
+	strcpy(config.rotate_type, "Tracker Radiosonde");
 	config.tcpfeed.highrate = 10;
 	config.tcpfeed.rotate_highrate = 60;
 	strcpy(config.signature, "RDZTTGO");
@@ -433,6 +461,16 @@ void Sonde::checkConfig() {
 	strcpy(config.tcpfeed.host, "radiosondy.info:14580");
 	if(config.tcpfeed.host2[0] == 0) {
 		strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
+	}
+	if(config.rotate_author[0] == 0) {
+		strcpy(config.rotate_author, "rdzTTGOsonde");
+	}
+	if(config.rotate_device[0] == 0) {
+		// User-provided config value has priority. Autodetect is only a fallback.
+		default_rotate_device_from_fingerprint(fingerprint, config.rotate_device, sizeof(config.rotate_device));
+	}
+	if(config.rotate_type[0] == 0) {
+		strcpy(config.rotate_type, "Tracker Radiosonde");
 	}
 	// legacy ephftp: old-style %04d/%03d/%02d → replace with new default ($Y $D $y)
 	if(!strchr(sonde.config.ephftp,'$')) strcpy(sonde.config.ephftp,DEFEPH);

@@ -331,8 +331,10 @@ typedef struct st_rdzconfig {
 	char objcall[10];		// APRS object call (for wettersonde.net)
 	char beaconsym[5];		// APRS beacon symbol
 	char comment[32];
-	char rotate_comment[32];	// Beacon comment used for rotate.aprs.net
-	char rotate_device[32];		// Device name shown on aprs.fi (appended to rotate beacon comment)
+	char rotate_comment[32];	// Rotate-specific beacon comment
+	char rotate_author[32];		// Rotate DeviceInfo field 1 (author)
+	char rotate_device[32];		// Rotate DeviceInfo field 2 (device description)
+	char rotate_type[32];		// Rotate DeviceInfo field 3 (type)
 	char signature[32];		// Signature used in APRS login/beacon text for radiosondy
 	struct st_axudpinfo udpfeed;	// target for AXUDP messages
 	struct st_aprsinfo tcpfeed;	// target for APRS-IS TCP connections

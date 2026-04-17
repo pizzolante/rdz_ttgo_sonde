@@ -126,7 +126,9 @@ tcp.objcall=
 tcp.beaconsym=/`/(
 tcp.comment=
 tcp.rotate.comment=
-tcp.rotate.device=RDZTTGO
+tcp.rotate.author=rdzTTGOsonde
+tcp.rotate.device=TTGO LORA32 v2.1_1.6
+tcp.rotate.type=Tracker Radiosonde
 #-------------------------------#
 # mqtt settings
 #-------------------------------#
