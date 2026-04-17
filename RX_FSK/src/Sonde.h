@@ -211,6 +211,8 @@ struct st_aprsinfo {
         char symbol[3];
         int lowrate;
         int highrate;
+	int radiosondy_fast_rate;
+	int radiosondy_fast_rate_height;
         int rotate_highrate;
         int lowlimit;
         int timeout;

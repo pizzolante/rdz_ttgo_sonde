@@ -119,6 +119,8 @@ tcp.signature=RDZTTGO
 # Currently this is fixed...
 # tcp.symbol=/O
 tcp.highrate=10
+tcp.radiosondy.fast_rate=2
+tcp.radiosondy.fast_rate_height=1000
 tcp.rotate.highrate=60
 # send beacon (possibly with different call or SSID)
 tcp.chase=0

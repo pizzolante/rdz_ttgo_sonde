@@ -788,6 +788,8 @@ struct st_configitems config_list[] = {
   {"tcp.objcall", 9, sonde.config.objcall},
   {"tcp.beaconsym", 4, sonde.config.beaconsym},
   {"tcp.highrate", 0, &sonde.config.tcpfeed.highrate},
+  {"tcp.radiosondy.fast_rate", 0, &sonde.config.tcpfeed.radiosondy_fast_rate},
+  {"tcp.radiosondy.fast_rate_height", 0, &sonde.config.tcpfeed.radiosondy_fast_rate_height},
   {"tcp.rotate.highrate", 0, &sonde.config.tcpfeed.rotate_highrate},
 #endif
 #if FEATURE_CHASEMAPPER

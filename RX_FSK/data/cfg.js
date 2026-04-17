@@ -49,6 +49,8 @@ var cfgs = [
 [ "tcp.host", "APRS TCP host1 (fixed: radiosondy.info:14580)"],
 [ "tcp.host2", "APRS TCP host2[:port] (use rotate.aprs.net:14580)"],
 [ "tcp.highrate", "Rate limit sonde (secondi, radiosondy)"],
+[ "tcp.radiosondy.fast_rate", "Radiosondy fast rate (sotto soglia altitudine, secondi; 0=off)"],
+[ "tcp.radiosondy.fast_rate_height", "Radiosondy fast rate height (metri)"],
 [ "tcp.rotate.highrate", "Rate limit sonde (secondi, rotate.aprs.net, min 60)"],
 [ "tcp.objcall", "APRS object call"],
 [ "tcp.beaconsym", "APRS tracker symbol"],

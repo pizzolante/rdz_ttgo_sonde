@@ -428,6 +428,8 @@ void Sonde::defaultConfig() {
 	default_rotate_device_from_fingerprint(fingerprint, config.rotate_device, sizeof(config.rotate_device));
 	strcpy(config.rotate_type, "Tracker Radiosonde");
 	config.tcpfeed.highrate = 10;
+	config.tcpfeed.radiosondy_fast_rate = 2;
+	config.tcpfeed.radiosondy_fast_rate_height = 1000;
 	config.tcpfeed.rotate_highrate = 60;
 	strcpy(config.signature, "RDZTTGO");
 	config.kisstnc.active = 0;
@@ -461,6 +463,12 @@ void Sonde::checkConfig() {
 	strcpy(config.tcpfeed.host, "radiosondy.info:14580");
 	if(config.tcpfeed.host2[0] == 0) {
 		strcpy(config.tcpfeed.host2, "rotate.aprs.net:14580");
+	}
+	if(config.tcpfeed.radiosondy_fast_rate < 0) {
+		config.tcpfeed.radiosondy_fast_rate = 0;
+	}
+	if(config.tcpfeed.radiosondy_fast_rate_height <= 0) {
+		config.tcpfeed.radiosondy_fast_rate_height = 1000;
 	}
 	if(config.rotate_author[0] == 0) {
 		strcpy(config.rotate_author, "rdzTTGOsonde");

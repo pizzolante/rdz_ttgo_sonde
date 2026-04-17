@@ -80,6 +80,10 @@ static bool aprs_feed_enabled(int idx) {
     return sonde.config.tcpfeed.rotate_active != 0;
 }
 
+static bool aprs_any_feed_enabled() {
+    return aprs_feed_enabled(0) || aprs_feed_enabled(1);
+}
+
 static float get_local_batt_voltage();
 static void aprs_write_line(st_aprs *a, const char *line);
 
@@ -223,7 +227,7 @@ void ConnAPRS::netsetup() {
         tncserver.begin();
     }
 
-    if(sonde.config.tcpfeed.active) {
+    if(aprs_any_feed_enabled()) {
         // start the FSM
         tcpclient_fsm();
     }
@@ -239,7 +243,7 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
     // prepare data (for UDP and TCP output)
     char *str = aprs_senddata(si, sonde.config.call, sonde.config.objcall, sonde.config.tcpfeed.symbol, APRS_DEST_RADIOSONDY, NULL);
 
-    Serial.printf("udpfedd active: %d  tcpfeed active: %d\n", sonde.config.udpfeed.active, sonde.config.tcpfeed.active);
+    Serial.printf("udpfedd active: %d  tcpfeed active: %d\n", sonde.config.udpfeed.active, aprs_any_feed_enabled());
     unsigned long now = millis();
     // Output via AXUDP
     if(sonde.config.udpfeed.active) {
@@ -268,28 +272,38 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
         tncclient.write(raw, rawlen);
     }
     // APRS via TCP (outgoing connection to aprs-is, e.g. radiosonde.info or wettersonde.net
-    if (sonde.config.tcpfeed.active) {
+    if (aprs_any_feed_enabled()) {
         static unsigned long lasttcp_radiosondy = 0;
         static unsigned long lasttcp_rotate = 0;
         tcpclient_fsm();
         if (aprs_feed_enabled(0) && aprs[0].tcpclient_state == TCS_CONNECTED) {
-            long tts = sonde.config.tcpfeed.highrate * 1000L - (long)(now - lasttcp_radiosondy);
-            if (tts < 0) {
+            int radiosondy_rate = sonde.config.tcpfeed.highrate > 0 ? sonde.config.tcpfeed.highrate : 10;
+            int radiosondy_fast_rate = sonde.config.tcpfeed.radiosondy_fast_rate;
+            int radiosondy_fast_rate_height = sonde.config.tcpfeed.radiosondy_fast_rate_height;
+            if (radiosondy_fast_rate > 0 && radiosondy_fast_rate_height > 0 && !isnan(si->d.alt) && si->d.alt < radiosondy_fast_rate_height) {
+                radiosondy_rate = radiosondy_fast_rate;
+            }
+            unsigned long radiosondy_interval = (unsigned long)radiosondy_rate * 1000UL;
+            unsigned long elapsed = now - lasttcp_radiosondy;
+            if (elapsed >= radiosondy_interval) {
                 sendSondeToRadiosondy(si);
                 lasttcp_radiosondy = now;
             } else {
-                Serial.printf("Sending APRS-radiosondy in %d s\n", (int)(tts/1000));
+                unsigned long tts = radiosondy_interval - elapsed;
+                Serial.printf("Sending APRS-radiosondy in %d s\n", (int)(tts / 1000UL));
             }
             aprs_send_telem_sample(aprs, now);
         }
         if (aprs_feed_enabled(1) && aprs[1].tcpclient_state == TCS_CONNECTED) {
             int rotate_rate = sonde.config.tcpfeed.rotate_highrate > 0 ? sonde.config.tcpfeed.rotate_highrate : 60;
-            long tts = rotate_rate * 1000L - (long)(now - lasttcp_rotate);
-            if (tts < 0) {
+            unsigned long rotate_interval = (unsigned long)rotate_rate * 1000UL;
+            unsigned long elapsed = now - lasttcp_rotate;
+            if (elapsed >= rotate_interval) {
                 sendSondeToRotate(si);
                 lasttcp_rotate = now;
             } else {
-                Serial.printf("Sending APRS-rotate in %d s\n", (int)(tts/1000));
+                unsigned long tts = rotate_interval - elapsed;
+                Serial.printf("Sending APRS-rotate in %d s\n", (int)(tts / 1000UL));
             }
             aprs_send_telem_sample(aprs + 1, now);
         }
@@ -321,7 +335,7 @@ void ConnAPRS::updateStation( PosInfo *pi ) {
 
     // If available, read data from tcpclient; then send update (if its time for that)
     tcpclient_fsm();
-    if(sonde.config.tcpfeed.active) {
+    if(aprs_any_feed_enabled()) {
         aprs_station_update();
     }
 
@@ -699,7 +713,7 @@ String ConnAPRS::getStatus() {
     else if (tncclient.connected()) strlcat(buf, "KISS TNC: server active, client connected<br>", 1024);
     else strlcat(buf, "KISS TNC: server active, idle<br>", 1024 );
     // APRS client
-    if(sonde.config.tcpfeed.active==0) strlcat(buf, "APRS: disabled", 1024);
+    if(!aprs_any_feed_enabled()) strlcat(buf, "APRS: disabled", 1024);
     else {
         snprintf( buf+strlen(buf), 1024-strlen(buf), "APRS: %s [%s] (%s)", aprsstate2str(aprs[0].tcpclient_state), aprs_effective_host(aprs), aprs_feed_enabled(0) ? "ON" : "OFF");
         uint32_t uptime = esp_timer_get_time() / 1000000;
