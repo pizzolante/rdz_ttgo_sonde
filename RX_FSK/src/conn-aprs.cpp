@@ -370,12 +370,7 @@ void ConnAPRS::aprs_station_update() {
   if (chase == SH_LOC_AUTO) {
     if (posInfo.chase) chase = SH_LOC_CHASE; else chase = SH_LOC_FIXED;
   }
-  unsigned long time_now = millis();
-  unsigned long time_delta = time_now - time_last_aprs_update;
-  unsigned long update_time = (chase == SH_LOC_CHASE) ? APRS_MOBILE_STATION_UPDATE_TIME : APRS_STATION_UPDATE_TIME;
-  long tts = update_time - time_delta;
-  Serial.printf("aprs_station_update due in %d s", (int)(tts/1000));
-  if (tts>0) return;
+    unsigned long time_now = millis();
 
   float lat, lon;
   if (chase == SH_LOC_FIXED) {
@@ -391,17 +386,29 @@ void ConnAPRS::aprs_station_update() {
       return;
     }
   }
+
   tcpclient_fsm();
-    // Beacon scheduling is independent from sonde RX traffic: this path is driven by updateStation().
+
+        // Radiosondy station beacon keeps its own cadence (mobile vs fixed).
+        unsigned long time_delta = time_now - time_last_aprs_update;
+        unsigned long update_time = (chase == SH_LOC_CHASE) ? APRS_MOBILE_STATION_UPDATE_TIME : APRS_STATION_UPDATE_TIME;
+        long tts = update_time - time_delta;
+        Serial.printf("aprs_station_update due in %d s", (int)(tts/1000));
+        if (tts <= 0) {
     sendBeaconToRadiosondy(lat, lon, chase);
-    unsigned long rotate_interval = (unsigned long)sonde.config.tcpfeed.rotate_beacon_interval * 60000UL;
+            time_last_aprs_update = time_now;
+        }
+
+        // Rotate beacon cadence is independent from station beacon cadence.
+        int rotate_minutes = sonde.config.tcpfeed.rotate_beacon_interval;
+        if (rotate_minutes <= 0) rotate_minutes = 15;
+        unsigned long rotate_interval = (unsigned long)rotate_minutes * 60000UL;
     bool rotate_smart = sonde.config.tcpfeed.smart_beacon_rotate != 0;
     bool sonde_active = rotate_smart ? (time_last_sonde_rx > 0 && (time_now - time_last_sonde_rx) < rotate_interval) : true;
     if (sonde_active && (time_now - time_last_rotate_beacon) >= rotate_interval) {
       sendBeaconToRotate(lat, lon, chase);
       time_last_rotate_beacon = time_now;
     }
-  time_last_aprs_update = time_now;
 }
 
 static void _tcp_dns_found(const char * name, const ip_addr_t *ipaddr, void * arg) {
