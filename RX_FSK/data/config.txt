@@ -131,6 +131,7 @@ tcp.rotate.comment=
 tcp.rotate.author=rdzTTGOsonde
 tcp.rotate.device=TTGO LORA32 v2.1_1.6
 tcp.rotate.type=Tracker Radiosonde
+tcp.rotate.tocall=APRRDZ
 #-------------------------------#
 # mqtt settings
 #-------------------------------#

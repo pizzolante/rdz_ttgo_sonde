@@ -60,6 +60,7 @@ var cfgs = [
 [ "tcp.rotate.author", "Rotate DeviceInfo 1 (author)"],
 [ "tcp.rotate.device", "Rotate DeviceInfo 2 (Device description)"],
 [ "tcp.rotate.type", "Rotate DeviceInfo 3 (type)"],
+[ "tcp.rotate.tocall", "Rotate TOCALL (APxxxx per device-id, es: APLHI1)"],
 [ "tcp.signature", "APRS FIRMA (usata per radiosondy login/beacon)"],
 [ "", "MQTT data feed configuration", "https://github.com/dl9rdz/rdz_ttgo_sonde/wiki/MQTT-configuration"],
 [ "mqtt.active", "MQTT message selection bitfield: 1=Sondes, 2=Uptime, 4=PMU, 8=GPS, 16=Scanner/Spectrum Peak, 128=Debug. 0 to disable MQTT (needs reboot)"],

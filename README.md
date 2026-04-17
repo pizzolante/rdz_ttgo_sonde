@@ -118,6 +118,46 @@ For TTGO boards without configurable button there are some new parameter in conf
 - timer=1           // 0=off / 1= show spectrum countdown timer in spectrum display
 - marker=1          // 0=off / 1= show channel edge freq in spectrum display
 
+## APRS Configuration (Rotate Feed)
+
+The firmware supports sending radiosonde data to the APRS-IS network via the rotate.aprs.net feed.
+
+### TOCALL and Device Identification
+
+The firmware uses a configurable TOCALL (AX.25 destination field) to enable proper device identification on APRS networks. **TOCALL** is a 6-character APRS code (format: `APxxxx`) used by decoders like direwolf to lookup device information from the [APRS device-id database](https://github.com/aprsorg/aprs-deviceid).
+
+**Default TOCALL: `APRRDZ`**
+- **AP** = APRS prefix (mandatory)
+- **RRD** = Radiosondy abbreviation
+- **Z** = variant identifier
+
+### Configuration
+
+In `config.txt`:
+```
+tcp.rotate.tocall=APRRDZ
+```
+
+### Custom TOCALL
+
+To use a custom TOCALL with vendor/model/class information:
+
+1. Register your custom TOCALL at [aprs-deviceid](https://github.com/aprsorg/aprs-deviceid) with your desired vendor name, model, and class
+2. Update configuration: `tcp.rotate.tocall=APxxxx` (your registered code)
+3. Reflash firmware or reload configuration
+
+When properly registered, your device will display as `vendor: model, class: classname` on aprs.fi instead of "Unknown".
+
+### Related Parameters
+
+- `tcp.rotate.active` - Enable/disable rotate feed (default: 0)
+- `tcp.rotate.beacon_interval` - Beacon send interval in minutes (default: 15)
+- `tcp.rotate.smart_beacon` - Enable smart beaconing based on recent sonde activity (default: 1)
+- `tcp.rotate.comment` - Optional comment suffix for beacons
+- `tcp.rotate.author` - Author/operator name
+- `tcp.rotate.device` - Device description
+- `tcp.rotate.type` - Device type/category
+
 ## Setup
 
 see [Wiki](https://github.com/dl9rdz/rdz_ttgo_sonde/wiki/Installation)

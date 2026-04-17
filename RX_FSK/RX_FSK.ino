@@ -784,6 +784,7 @@ struct st_configitems config_list[] = {
   {"tcp.rotate.author", 31, sonde.config.rotate_author},
   {"tcp.rotate.device", 31, sonde.config.rotate_device},
   {"tcp.rotate.type", 31, sonde.config.rotate_type},
+  {"tcp.rotate.tocall", 7, sonde.config.rotate_tocall},
   {"tcp.signature", 31, sonde.config.signature},
   {"tcp.objcall", 9, sonde.config.objcall},
   {"tcp.beaconsym", 4, sonde.config.beaconsym},

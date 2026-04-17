@@ -427,6 +427,7 @@ void Sonde::defaultConfig() {
 	strcpy(config.rotate_author, "rdzTTGOsonde");
 	default_rotate_device_from_fingerprint(fingerprint, config.rotate_device, sizeof(config.rotate_device));
 	strcpy(config.rotate_type, "Tracker Radiosonde");
+	strcpy(config.rotate_tocall, "APRRDZ");
 	config.tcpfeed.highrate = 10;
 	config.tcpfeed.radiosondy_fast_rate = 2;
 	config.tcpfeed.radiosondy_fast_rate_height = 1000;
@@ -479,6 +480,15 @@ void Sonde::checkConfig() {
 	}
 	if(config.rotate_type[0] == 0) {
 		strcpy(config.rotate_type, "Tracker Radiosonde");
+	}
+	if(config.rotate_tocall[0] == 0) {
+		strcpy(config.rotate_tocall, "APRRDZ");
+	}
+	for (char *p = config.rotate_tocall; *p; ++p) {
+		if (*p >= 'a' && *p <= 'z') *p = *p - ('a' - 'A');
+	}
+	if (strncmp(config.rotate_tocall, "AP", 2) != 0) {
+		strcpy(config.rotate_tocall, "APRRDZ");
 	}
 	// legacy ephftp: old-style %04d/%03d/%02d → replace with new default ($Y $D $y)
 	if(!strchr(sonde.config.ephftp,'$')) strcpy(sonde.config.ephftp,DEFEPH);

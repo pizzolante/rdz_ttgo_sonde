@@ -25,7 +25,7 @@ static WiFiClient tncclient;
 #define APRS_PRIMARY_HOST "radiosondy.info:14580"
 #define APRS_SECONDARY_DEFAULT_HOST "rotate.aprs.net:14580"
 #define APRS_DEST_RADIOSONDY "APRRDZ"
-#define APRS_DEST_APRSIS "APRDZ1,TCPIP*"
+#define APRS_ROTATE_TOCALL_DEFAULT "APRRDZ"
 struct st_aprs {
     int tcpclient;
     ip_addr_t tcpclient_ipaddr;
@@ -65,7 +65,12 @@ static const char *aprs_effective_host(const st_aprs *a) {
 }
 
 static const char *aprs_dest_for(const st_aprs *a) {
-    return (aprs_index(a) == 0) ? APRS_DEST_RADIOSONDY : APRS_DEST_APRSIS;
+    return (aprs_index(a) == 0) ? APRS_DEST_RADIOSONDY : APRS_ROTATE_TOCALL_DEFAULT;
+}
+
+static void aprs_rotate_dest(char *dst, size_t dst_len) {
+    const char *tocall = sonde.config.rotate_tocall[0] ? sonde.config.rotate_tocall : APRS_ROTATE_TOCALL_DEFAULT;
+    snprintf(dst, dst_len, "%s,TCPIP*", tocall);
 }
 
 static const char *aprs_tail_for(const st_aprs *a) {
@@ -283,12 +288,14 @@ void ConnAPRS::sendSondeToRadiosondy(SondeInfo *si) {
 
 void ConnAPRS::sendSondeToRotate(SondeInfo *si) {
     if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
+    char rotate_dest[24];
+    aprs_rotate_dest(rotate_dest, sizeof(rotate_dest));
     char *line = aprs_senddata(
         si,
         sonde.config.call,
         sonde.config.objcall,
         sonde.config.tcpfeed.symbol,
-        aprs_dest_for(aprs + 1),
+        rotate_dest,
         aprs_tail_for(aprs + 1)
     );
     Serial.printf("Sending APRS rotate: %s\n", line);
@@ -350,13 +357,15 @@ void ConnAPRS::sendBeaconToRotate(float lat, float lon, int chase) {
     }
 
     // Do not append battery info on rotate beacon; keep device string parseable.
+    char rotate_dest[24];
+    aprs_rotate_dest(rotate_dest, sizeof(rotate_dest));
     char *bcn = aprs_send_beacon(
         sonde.config.call,
         lat,
         lon,
         sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
         full_comment,
-        aprs_dest_for(aprs + 1),
+        rotate_dest,
         aprs_tail_for(aprs + 1)
     );
     aprs_beacon(bcn, aprs + 1);

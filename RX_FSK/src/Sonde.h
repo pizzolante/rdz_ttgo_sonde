@@ -337,6 +337,7 @@ typedef struct st_rdzconfig {
 	char rotate_author[32];		// Rotate DeviceInfo field 1 (author)
 	char rotate_device[32];		// Rotate DeviceInfo field 2 (device description)
 	char rotate_type[32];		// Rotate DeviceInfo field 3 (type)
+	char rotate_tocall[8];		// Rotate TOCALL (APxxxx) used for device-id decoding
 	char signature[32];		// Signature used in APRS login/beacon text for radiosondy
 	struct st_axudpinfo udpfeed;	// target for AXUDP messages
 	struct st_aprsinfo tcpfeed;	// target for APRS-IS TCP connections
