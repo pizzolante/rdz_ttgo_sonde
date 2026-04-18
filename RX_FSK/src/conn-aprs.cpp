@@ -11,6 +11,7 @@
 
 #include <sys/socket.h>
 #include <lwip/dns.h>
+#include <errno.h>
 
 #include <ESPAsyncWebServer.h>
 
@@ -21,6 +22,7 @@ static WiFiClient tncclient;
 // APRS over TCP for radiosondy.info etc
 // now we support up to two APRS connections (e.g. radiosondy.info, wettersonde.net)
 #define N_APRS 2
+#define APRS_TX_QUEUE_LEN 12
 #define APRS_PRIMARY_HOST "radiosondy.info:14580"
 #define APRS_SECONDARY_DEFAULT_HOST "rotate.aprs.net:14580"
 #define APRS_DEST_RADIOSONDY "APRRDZ"
@@ -32,6 +34,10 @@ struct st_aprs {
     unsigned long last_in;
     uint8_t tcpclient_state;
     uint32_t conn_ts;
+    char tx_queue[APRS_TX_QUEUE_LEN][APRS_MAXLEN + 3];
+    uint8_t tx_head;
+    uint8_t tx_count;
+    size_t tx_offset;
 } aprs[2]={0}; 
 enum { TCS_DISCONNECTED, TCS_DNSLOOKUP, TCS_DNSRESOLVED, TCS_CONNECTING, TCS_LOGIN, TCS_CONNECTED };
 
@@ -84,6 +90,9 @@ static bool aprs_any_feed_enabled() {
 }
 
 static void aprs_write_line(st_aprs *a, const char *line);
+static void aprs_reset_tx(st_aprs *a);
+static bool aprs_queue_line(st_aprs *a, const char *line);
+static bool aprs_try_flush_tx(st_aprs *a);
 
 static bool aprs_get_station_position(float *lat, float *lon, int *chase_mode) {
     int chase = sonde.config.chase;
@@ -110,10 +119,66 @@ static bool aprs_get_station_position(float *lat, float *lon, int *chase_mode) {
 }
 
 static void aprs_write_line(st_aprs *a, const char *line) {
-    if (a->tcpclient_state != TCS_CONNECTED) return;
-    char out[APRS_MAXLEN + 3];
-    snprintf(out, sizeof(out), "%s\r\n", line);
-    write(a->tcpclient, out, strlen(out));
+    if (!aprs_queue_line(a, line)) {
+        Serial.println("APRS TX queue full, dropping frame");
+        return;
+    }
+    aprs_try_flush_tx(a);
+}
+
+static void aprs_reset_tx(st_aprs *a) {
+    a->tx_head = 0;
+    a->tx_count = 0;
+    a->tx_offset = 0;
+}
+
+static bool aprs_queue_line(st_aprs *a, const char *line) {
+    if (a->tx_count >= APRS_TX_QUEUE_LEN) {
+        return false;
+    }
+
+    uint8_t slot = (uint8_t)((a->tx_head + a->tx_count) % APRS_TX_QUEUE_LEN);
+    size_t linelen = strlen(line);
+    bool has_newline = linelen > 0 && line[linelen - 1] == '\n';
+
+    if (has_newline) {
+        strlcpy(a->tx_queue[slot], line, sizeof(a->tx_queue[slot]));
+    } else {
+        snprintf(a->tx_queue[slot], sizeof(a->tx_queue[slot]), "%s\r\n", line);
+    }
+
+    a->tx_count++;
+    return true;
+}
+
+static bool aprs_try_flush_tx(st_aprs *a) {
+    if (a->tcpclient_state != TCS_CONNECTED || a->tcpclient < 0) {
+        return true;
+    }
+
+    while (a->tx_count > 0) {
+        char *cur = a->tx_queue[a->tx_head];
+        size_t len = strlen(cur);
+
+        if (a->tx_offset >= len) {
+            a->tx_head = (uint8_t)((a->tx_head + 1) % APRS_TX_QUEUE_LEN);
+            a->tx_count--;
+            a->tx_offset = 0;
+            continue;
+        }
+
+        int res = write(a->tcpclient, cur + a->tx_offset, len - a->tx_offset);
+        if (res > 0) {
+            a->tx_offset += (size_t)res;
+            continue;
+        }
+        if (res < 0 && (errno == EWOULDBLOCK || errno == EAGAIN)) {
+            return true;
+        }
+        return false;
+    }
+
+    return true;
 }
 
 
@@ -130,6 +195,8 @@ void ConnAPRS::init() {
     }
     Serial.printf("AXUDP: host=%s, port=%d\n", udphost, udpport);
     aprs[0].tcpclient = aprs[1].tcpclient = -1;
+    aprs_reset_tx(aprs);
+    aprs_reset_tx(aprs + 1);
 }
 
 void ConnAPRS::netsetup() {
@@ -147,6 +214,8 @@ void ConnAPRS::netsetup() {
 
 void ConnAPRS::netshutdown() {
     tncserver.close();
+    aprs_reset_tx(aprs);
+    aprs_reset_tx(aprs + 1);
 }
 
 void ConnAPRS::updateSonde( SondeInfo *si ) {
@@ -348,7 +417,7 @@ void ConnAPRS::sendDetailToRotate(SondeInfo *si) {
         "%s>%s:>Dettaglio completo: https://radiosondy.info/sonde.php?sondenumber=%s\r\n",
         sonde.config.call, rotate_dest, si->d.id);
     Serial.printf("Sending APRS rotate detail: %s", line);
-    write(aprs[1].tcpclient, line, strlen(line));
+    aprs_write_line(aprs + 1, line);
     strlcpy(last_rotate_detail_sonde_id, si->d.id, sizeof(last_rotate_detail_sonde_id));
 }
 
@@ -484,6 +553,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
         }
         a->tcpclient = -1;
         a->tcpclient_state = TCS_DISCONNECTED;
+        aprs_reset_tx(a);
         return;
     }
 
@@ -548,6 +618,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
                 close(a->tcpclient);
                 a->tcpclient = -1;
                 a->tcpclient_state = TCS_DISCONNECTED;
+                aprs_reset_tx(a);
             }
         } else {
             a->tcpclient_state = TCS_CONNECTED;
@@ -590,6 +661,9 @@ static void tcpclient_fsm_single(st_aprs *a) {
         
     case TCS_CONNECTED:
       {
+        if (!aprs_try_flush_tx(a)) {
+            goto error;
+        }
                 fd_set fdset;
                 FD_ZERO(&fdset);
                 FD_SET(a->tcpclient, &fdset);
@@ -607,6 +681,7 @@ static void tcpclient_fsm_single(st_aprs *a) {
             close(a->tcpclient);
             a->tcpclient = -1;
             a->tcpclient_state = TCS_DISCONNECTED;
+            aprs_reset_tx(a);
         } else {
             buf[res] = 0;
             Serial.printf("tcpclient data (len=%d):", res);
@@ -626,6 +701,7 @@ error:
     if(a->tcpclient >= 0) close(a->tcpclient);
     a->tcpclient = -1;
     a->tcpclient_state = TCS_DISCONNECTED;
+    aprs_reset_tx(a);
     return;
 }
 
