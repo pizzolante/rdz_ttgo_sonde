@@ -14,6 +14,11 @@
 static unsigned long time_last_aprs_update = -APRS_STATION_UPDATE_TIME;
 static unsigned long time_last_rotate_beacon = -APRS_STATION_UPDATE_TIME;
 static unsigned long time_last_sonde_rx = 0;
+static char last_sonde_rx_id[10] = "";
+static uint32_t last_sonde_rx_vframe = 0xffffffffUL;
+static char last_rotate_beacon_sonde_id[10] = "";
+static char last_rotate_data_sonde_id[10] = "";
+static char last_rotate_detail_sonde_id[10] = "";
 
 
 class ConnAPRS : public Conn
@@ -42,6 +47,7 @@ private:
 	void aprs_station_update();
         void sendSondeToRadiosondy(SondeInfo *si);
         void sendSondeToRotate(SondeInfo *si);
+        void sendDetailToRotate(SondeInfo *si);
         void sendBeaconToRadiosondy(float lat, float lon, int chase);
         void sendBeaconToRotate(float lat, float lon, int chase);
 };

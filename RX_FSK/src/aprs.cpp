@@ -296,7 +296,7 @@ char *aprs_send_beacon(const char *usercall, float lat, float lon, const char *s
 	return b;
 }
 
-char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, const char *sym, const char *dest, const char *tail) {
+char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, const char *sym, const char *dest, const char *tail, bool include_sats, bool include_batt) {
 	SondeData *s = &(si->d);
 	(void)objcall;
 	*b=0;
@@ -349,8 +349,11 @@ char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, co
 	if( !isnan(s->relativeHumidity) ) {
 		sprintf(b+strlen(b), "h=%.1f%% ", s->relativeHumidity);
 	}
-	if( !isnan(s->batteryVoltage) && s->batteryVoltage > 0 ) {
+	if( include_batt && !isnan(s->batteryVoltage) && s->batteryVoltage > 0 ) {
 		sprintf(b+strlen(b), "Batt=%.2fV ", s->batteryVoltage);
+	}
+	if (include_sats && VALIDSATS(s->validPos)) {
+		sprintf(b + strlen(b), "Sats=%d ", (int)s->sats);
 	}
 	char type[12];
         if ( si->type == STYPE_RS41 && RS41::getSubtype(type, 11, si) == 0 ) {
@@ -367,7 +370,8 @@ char *aprs_senddata(SondeInfo *si, const char *usercall, const char *objcall, co
 		sprintf(b + strlen(b), "ser=%s ", s->ser);
 	}
 	if(tail && *tail) {
-		sprintf(b + strlen(b), "%s", tail);
+		i = strlen(b);
+		snprintf(b + i, APRS_MAXLEN - i, "%s", tail);
 	}
 	return b;
 }

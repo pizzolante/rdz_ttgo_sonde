@@ -4,7 +4,6 @@
 
 #include "conn-aprs.h"
 #include "aprs.h"
-#include "pmu.h"
 #include "posinfo.h"
 #include <ESPmDNS.h>
 #include <WiFi.h>
@@ -40,8 +39,6 @@ char udphost[64];
 int udpport;
 
 extern const char *version_id;
-extern PMU *pmu;
-
 extern WiFiUDP udp;
 
 void tcpclient_fsm();
@@ -86,28 +83,30 @@ static bool aprs_any_feed_enabled() {
     return aprs_feed_enabled(0) || aprs_feed_enabled(1);
 }
 
-static float get_local_batt_voltage();
 static void aprs_write_line(st_aprs *a, const char *line);
 
-static float get_local_batt_voltage() {
-    if(!pmu) {
-        return getBattNoPMU();
+static bool aprs_get_station_position(float *lat, float *lon, int *chase_mode) {
+    int chase = sonde.config.chase;
+    if (chase == SH_LOC_OFF) return false;
+    if (chase == SH_LOC_AUTO) {
+        chase = posInfo.chase ? SH_LOC_CHASE : SH_LOC_FIXED;
     }
-    return pmu->getBattVoltage() * 0.001f;
-}
 
-static void build_comment_with_batt(char *dst, size_t dst_len, const char *base_comment) {
-    if (dst_len == 0) return;
-    float batt = get_local_batt_voltage();
-    if (isnan(batt) || batt <= 0.0f) {
-        strlcpy(dst, base_comment ? base_comment : "", dst_len);
-        return;
-    }
-    if (base_comment && base_comment[0]) {
-        snprintf(dst, dst_len, "%s Batt: %.2fV", base_comment, batt);
+    float out_lat, out_lon;
+    if (chase == SH_LOC_FIXED) {
+        out_lat = sonde.config.rxlat;
+        out_lon = sonde.config.rxlon;
+        if (isnan(out_lat) || isnan(out_lon)) return false;
     } else {
-        snprintf(dst, dst_len, "Batt: %.2fV", batt);
+        if (!gpsPos.valid) return false;
+        out_lat = gpsPos.lat;
+        out_lon = gpsPos.lon;
     }
+
+    *lat = out_lat;
+    *lon = out_lon;
+    *chase_mode = chase;
+    return true;
 }
 
 static void aprs_write_line(st_aprs *a, const char *line) {
@@ -151,12 +150,38 @@ void ConnAPRS::netshutdown() {
 }
 
 void ConnAPRS::updateSonde( SondeInfo *si ) {
-    time_last_sonde_rx = millis();
+    unsigned long now = millis();
+
+    if (si->d.validID && si->d.id[0]) {
+        bool sonde_changed = strncmp(last_sonde_rx_id, si->d.id, sizeof(last_sonde_rx_id) - 1) != 0;
+        bool frame_changed = si->d.vframe != last_sonde_rx_vframe;
+        if (sonde_changed || frame_changed) {
+            time_last_sonde_rx = now;
+            strlcpy(last_sonde_rx_id, si->d.id, sizeof(last_sonde_rx_id));
+            last_sonde_rx_vframe = si->d.vframe;
+        }
+    }
+
+    // Smart rotate beacon: send one immediate station beacon when a new sonde ID appears.
+    if (aprs_feed_enabled(1) && sonde.config.tcpfeed.smart_beacon_rotate != 0 && si->d.validID && si->d.id[0]) {
+        if (strncmp(last_rotate_beacon_sonde_id, si->d.id, sizeof(last_rotate_beacon_sonde_id) - 1) != 0) {
+            float lat, lon;
+            int chase;
+            if (aprs_get_station_position(&lat, &lon, &chase)) {
+                tcpclient_fsm();
+                if (aprs[1].tcpclient_state == TCS_CONNECTED) {
+                    sendBeaconToRotate(lat, lon, chase);
+                    time_last_rotate_beacon = now;
+                    strlcpy(last_rotate_beacon_sonde_id, si->d.id, sizeof(last_rotate_beacon_sonde_id));
+                }
+            }
+        }
+    }
+
     // prepare data (for UDP and TCP output)
     char *str = aprs_senddata(si, sonde.config.call, sonde.config.objcall, sonde.config.tcpfeed.symbol, APRS_DEST_RADIOSONDY, NULL);
 
     Serial.printf("udpfedd active: %d  tcpfeed active: %d\n", sonde.config.udpfeed.active, aprs_any_feed_enabled());
-    unsigned long now = millis();
     // Output via AXUDP
     if(sonde.config.udpfeed.active) {
 	static unsigned long lastudp = 0;
@@ -209,7 +234,14 @@ void ConnAPRS::updateSonde( SondeInfo *si ) {
             int rotate_rate = sonde.config.tcpfeed.rotate_highrate > 0 ? sonde.config.tcpfeed.rotate_highrate : 60;
             unsigned long rotate_interval = (unsigned long)rotate_rate * 1000UL;
             unsigned long elapsed = now - lasttcp_rotate;
-            if (elapsed >= rotate_interval) {
+            bool new_sonde = si->d.validID && si->d.id[0]
+                && strncmp(last_rotate_data_sonde_id, si->d.id, sizeof(last_rotate_data_sonde_id) - 1) != 0;
+            if (new_sonde) {
+                sendSondeToRotate(si);
+                //sendDetailToRotate(si);  // TODO: decidere formato/associazione
+                lasttcp_rotate = now;
+                strlcpy(last_rotate_data_sonde_id, si->d.id, sizeof(last_rotate_data_sonde_id));
+            } else if (elapsed >= rotate_interval) {
                 sendSondeToRotate(si);
                 lasttcp_rotate = now;
             } else {
@@ -280,7 +312,9 @@ void ConnAPRS::sendSondeToRadiosondy(SondeInfo *si) {
         sonde.config.objcall,
         sonde.config.tcpfeed.symbol,
         aprs_dest_for(aprs),
-        aprs_tail_for(aprs)
+        aprs_tail_for(aprs),
+        false,
+        false
     );
     Serial.printf("Sending APRS radiosondy: %s\n", line);
     aprs_write_line(aprs, line);
@@ -290,28 +324,44 @@ void ConnAPRS::sendSondeToRotate(SondeInfo *si) {
     if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
     char rotate_dest[24];
     aprs_rotate_dest(rotate_dest, sizeof(rotate_dest));
+
     char *line = aprs_senddata(
         si,
         sonde.config.call,
         sonde.config.objcall,
         sonde.config.tcpfeed.symbol,
         rotate_dest,
-        aprs_tail_for(aprs + 1)
+        aprs_tail_for(aprs + 1),
+        true
     );
     Serial.printf("Sending APRS rotate: %s\n", line);
     aprs_write_line(aprs + 1, line);
 }
 
+void ConnAPRS::sendDetailToRotate(SondeInfo *si) {
+    if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
+    if (!si->d.validID || !si->d.id[0]) return;
+    char rotate_dest[24];
+    aprs_rotate_dest(rotate_dest, sizeof(rotate_dest));
+    char line[APRS_MAXLEN + 3];
+    snprintf(line, sizeof(line),
+        "%s>%s:>Dettaglio completo: https://radiosondy.info/sonde.php?sondenumber=%s\r\n",
+        sonde.config.call, rotate_dest, si->d.id);
+    Serial.printf("Sending APRS rotate detail: %s", line);
+    write(aprs[1].tcpclient, line, strlen(line));
+    strlcpy(last_rotate_detail_sonde_id, si->d.id, sizeof(last_rotate_detail_sonde_id));
+}
+
 void ConnAPRS::sendBeaconToRadiosondy(float lat, float lon, int chase) {
     if (!aprs_feed_enabled(0) || aprs[0].tcpclient_state != TCS_CONNECTED) return;
-    char comment_with_batt[96];
-    build_comment_with_batt(comment_with_batt, sizeof(comment_with_batt), sonde.config.comment);
+    char comment_plain[96];
+    strlcpy(comment_plain, sonde.config.comment, sizeof(comment_plain));
     char *bcn = aprs_send_beacon(
         sonde.config.call,
         lat,
         lon,
         sonde.config.beaconsym + ((chase == SH_LOC_CHASE) ? 2 : 0),
-        comment_with_batt,
+        comment_plain,
         aprs_dest_for(aprs),
         aprs_tail_for(aprs)
     );
@@ -320,43 +370,15 @@ void ConnAPRS::sendBeaconToRadiosondy(float lat, float lon, int chase) {
 
 void ConnAPRS::sendBeaconToRotate(float lat, float lon, int chase) {
     if (!aprs_feed_enabled(1) || aprs[1].tcpclient_state != TCS_CONNECTED) return;
-    // Keep rotate device metadata in a strict format recognized by aprs.fi:
-    // "author: device (type)"
     char full_comment[96];
     const char *base_comment = sonde.config.rotate_comment[0] ? sonde.config.rotate_comment : sonde.config.comment;
-    const char *author = sonde.config.rotate_author;
-    const char *device = sonde.config.rotate_device;
-    const char *dtype = sonde.config.rotate_type;
-    char device_info[80];
-    if (author[0] || device[0] || dtype[0]) {
-        if (author[0] && device[0] && dtype[0]) {
-            snprintf(device_info, sizeof(device_info), "%s: %s (%s)", author, device, dtype);
-        } else if (author[0] && device[0]) {
-            snprintf(device_info, sizeof(device_info), "%s: %s", author, device);
-        } else if (author[0] && dtype[0]) {
-            snprintf(device_info, sizeof(device_info), "%s (%s)", author, dtype);
-        } else if (device[0] && dtype[0]) {
-            snprintf(device_info, sizeof(device_info), "%s (%s)", device, dtype);
-        } else if (author[0]) {
-            strlcpy(device_info, author, sizeof(device_info));
-        } else if (device[0]) {
-            strlcpy(device_info, device, sizeof(device_info));
-        } else {
-            strlcpy(device_info, dtype, sizeof(device_info));
-        }
-    } else {
-        device_info[0] = 0;
-    }
-
-    if (device_info[0]) {
-        strlcpy(full_comment, device_info, sizeof(full_comment));
-    } else if (base_comment[0]) {
+    if (base_comment[0]) {
         strlcpy(full_comment, base_comment, sizeof(full_comment));
     } else {
         full_comment[0] = 0;
     }
 
-    // Do not append battery info on rotate beacon; keep device string parseable.
+    // Do not append battery info on rotate beacon.
     char rotate_dest[24];
     aprs_rotate_dest(rotate_dest, sizeof(rotate_dest));
     char *bcn = aprs_send_beacon(
